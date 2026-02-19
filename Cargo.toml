@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Seb <strycharz97@gmail.com>"]
 edition = "2021"
 resolver = "2"
-rust-version = "1.77"
+rust-version = "1.85.0"
 
 [[bin]]
 name = "airbeam-mini"
@@ -24,7 +24,7 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = "0.51"
+esp-idf-svc = { version = "0.51.0", features = ["alloc", "experimental"] }
 esp32-nimble = "0.11.1"
 anyhow = "1.0.100"
 byteorder = "1.5.0" #for parsing plantower data
@@ -45,6 +45,9 @@ byteorder = "1.5.0" #for parsing plantower data
 # --- Temporary workaround for embassy-executor < 0.8 ---
 # esp-idf-svc = { version = "0.51", features = ["embassy-time-driver", "embassy-sync"] }
 # critical-section = { version = "1.1", features = ["std"], default-features = false }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "joltwallet/littlefs", version = "1.14" }
 
 [build-dependencies]
 embuild = "0.33"

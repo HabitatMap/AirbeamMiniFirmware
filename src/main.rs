@@ -1,29 +1,42 @@
 mod led;
 mod sensor;
+mod storage;
 
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
+use esp_idf_svc::fs::littlefs::Littlefs;
+use esp_idf_svc::hal::delay::FreeRtos;
+use esp_idf_svc::io::vfs::MountedLittlefs;
+use log::info;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::SensorDriver;
+use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
+
 
 fn main() -> anyhow::Result<()> {
-    // 1. Link patches to the ESP-IDF system (Required for std)
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    log::info!("Starting up!");
+    info!("Starting up!");
 
-    // 2. Get Peripherals
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
-    
+
+    let lfs = unsafe { Littlefs::<()>::new_partition("storage") }?;
+    let mounted = MountedLittlefs::mount(lfs, MOUNT_POINT).unwrap_or_else(|e| {
+        log::error!("Formatting storage, Failed to mount filesystem: {:?}", e);
+        let mut lfs = unsafe { Littlefs::<()>::new_partition("storage") }.unwrap();
+        let _ = lfs.format();
+        MountedLittlefs::mount(lfs, MOUNT_POINT).unwrap()
+    }); //this MUST be kept alive, otherwise filesystem will unmount
+    info!("Filesystem info: {:?}", mounted.info());
     let led_pins = LedPins {
         timer: peripherals.ledc.timer0,
         channel_r: peripherals.ledc.channel0,
@@ -49,33 +62,17 @@ fn main() -> anyhow::Result<()> {
         Option::<gpio::Gpio1>::None, // RTS
         &config,
     )?;
+
     let sensor = SensorDriver::new(uart);
-    let tx = start_led_thread(led_pins)?;
+    let led_command = start_led_thread(led_pins)?;
+    let storage = StorageManager::new();
     loop {
-        tx.send(LedCommand::Continuous(Color::RED))?;
-        log::info!("Red LED on");
-        let (meas, stop) = sensor.start_sensor_task(Duration::from_secs(0));
-        for _ in 0..10 {
-            let mes = meas.recv()?;
-            log::info!("Measurement received: {:?}", mes);
-        }
-        stop.send(())?;
-        tx.send(LedCommand::Continuous(Color::GREEN))?;
-        thread::sleep(Duration::from_secs(5));
-        let (meas, stop) = sensor.start_sensor_task(Duration::from_secs(20));
-        for _ in 0..10 {
-            let mes = meas.recv()?;
-            log::info!("Measurement received: {:?}", mes);
-        }
-        stop.send(())?;
-        tx.send(LedCommand::Blinking(Color::BLUE, Duration::from_secs(2)))?;
-        thread::sleep(Duration::from_secs(5));
-        let (meas, stop) = sensor.start_sensor_task(Duration::from_secs(100));
-        for _ in 0..3 {
-            let mes = meas.recv()?;
-            log::info!("Measurement received: {:?}", mes);
-        }
-        stop.send(())?;
-        thread::sleep(Duration::from_secs(5));
+        let size = storage.total_measurement_count();
+        info!("Stored {} measurements", size);
+        led_command.send(LedCommand::Continuous(Color::RED))?;
+        info!("Red LED on");
+        led_command.send(LedCommand::Off)?;
+        info!("Red LED off");
+        thread::sleep(Duration::from_secs(3));
     }
 }
