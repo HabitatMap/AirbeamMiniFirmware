@@ -76,8 +76,7 @@ To build, flash, and monitor the serial output in one go:
 cargo run
 ```
 
-Or manually with `espflash`:
-
+## Generate firmware binary (.bin) file to share
 ```bash
-cargo espflash flash --monitor
+cargo espflash save-image --merge --partition-table partitions.csv --chip esp32c3 abmfw.bin
 ```

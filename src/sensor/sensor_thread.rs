@@ -14,16 +14,20 @@ const CMD_READ: [u8; 7] = [0x42, 0x4D, 0xE2, 0x00, 0x00, 0x01, 0x71];
 const CMD_SLEEP: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x00, 0x01, 0x73];
 const CMD_WAKE: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x01, 0x01, 0x74];
 const WAKE_UP_SECONDS: u64 = 5;
+
+const SENSOR_READOUT_TIMEOUT: u16 = 2300; //Longest possible time between the readouts
 #[derive(Debug, Clone, Copy)]
 pub struct Measurement {
     pm1_0_avg: u32,
     pm2_5_avg: u32,
+    pub raw: u16,
 }
 impl From<PmsMeasurement> for Measurement {
     fn from(value: PmsMeasurement) -> Self {
         Measurement {
             pm1_0_avg: value.pm1_0_atm as u32,
             pm2_5_avg: value.pm2_5_atm as u32,
+            raw: value.pm1_0_atm
         }
     }
 }
@@ -81,7 +85,7 @@ impl SensorDriver {
 
                     let mut byte_buf = [0u8; 1];
                     let read_byte=
-                        || match uart.read(&mut byte_buf, 100) {
+                        || match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT.into()) {
                             Ok(_bytes) => Some(byte_buf),
                             _ => None,
                         };
@@ -135,7 +139,7 @@ impl SensorDriver {
 
         while duration > instant.elapsed() {
             read_command();
-            if let Some(parsed) = Self::read_uart(|| read_byte(), duration) {
+            if let Some(parsed) = Self::read_uart(&mut read_byte, duration) {
                 pm1_0_sum += parsed.pm1_0_avg;
                 pm2_5_sum += parsed.pm2_5_avg;
                 count += 1;
@@ -150,6 +154,7 @@ impl SensorDriver {
             Some(Measurement {
                 pm1_0_avg: final_pm1,
                 pm2_5_avg: final_pm25,
+                raw: final_pm1 as u16
             })
         } else {
             None
