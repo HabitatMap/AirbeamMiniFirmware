@@ -1,6 +1,7 @@
 mod led;
 mod sensor;
 mod storage;
+mod setup;
 
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -11,12 +12,12 @@ use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::fs::littlefs::Littlefs;
-use esp_idf_svc::hal::delay::FreeRtos;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use log::info;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::SensorDriver;
-use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
+use crate::storage::nvs_manager::NvsManager;
+use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
 
 
 fn main() -> anyhow::Result<()> {
@@ -66,7 +67,11 @@ fn main() -> anyhow::Result<()> {
     let sensor = SensorDriver::new(uart);
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
+    let mut nvs_manager = NvsManager::new(nvs)?;
     loop {
+        let is_mobile = nvs_manager.get_is_mobile()?;
+        info!("Is logged in: {:?}", is_mobile);
+        nvs_manager.set_is_mobile(true)?;
         let size = storage.total_measurement_count();
         info!("Stored {} measurements", size);
         led_command.send(LedCommand::Continuous(Color::RED))?;
