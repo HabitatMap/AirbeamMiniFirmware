@@ -27,6 +27,17 @@ impl NvsManager {
         Ok(Self { nvs })
     }
 
+    pub fn clear_all(&mut self) -> Result<(), EspError> {
+        self.nvs.remove(KEY_UUID)?;
+        self.nvs.remove(KEY_WIFI_SSID)?;
+        self.nvs.remove(KEY_WIFI_PASS)?;
+        self.nvs.remove(KEY_IS_MOBILE)?;
+        self.nvs.remove(KEY_MEASUREMENT_INTERVAL)?;
+        self.nvs.remove(KEY_PM1_INDEX)?;
+        self.nvs.remove(KEY_PM2_5_INDEX)?;
+        Ok(())
+    }
+
     pub fn get_uuid(&self) -> Result<Option<Uuid>, EspError> {
         let mut buffer = [0u8; 16];
         Ok(self.nvs.get_blob(KEY_UUID, &mut buffer)?
