@@ -3,9 +3,6 @@ use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvs};
 use esp_idf_svc::sys::EspError;
 use uuid::Uuid;
 
-// Assuming crate::setup::SessionType is used elsewhere or can be removed if unused
-// use crate::setup::SessionType;
-
 const NAMESPACE: &str = "session";
 const KEY_UUID: &str = "uuid";
 const KEY_WIFI_SSID: &str = "wifi_ssid";
@@ -69,12 +66,10 @@ impl NvsManager {
     }
 
     pub fn get_is_mobile(&self) -> Result<Option<bool>, EspError> {
-        // .map() handles the Option cleanly
         Ok(self.nvs.get_u8(KEY_IS_MOBILE)?.map(|val| val != 0))
     }
 
     pub fn set_is_mobile(&mut self, is_mobile: bool) -> Result<(), EspError> {
-        // Cast bool to u8 directly to save lines
         self.nvs.set_u8(KEY_IS_MOBILE, is_mobile as u8)
     }
 
