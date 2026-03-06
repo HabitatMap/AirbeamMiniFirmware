@@ -2,6 +2,7 @@ use std::time::Duration;
 use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvs};
 use esp_idf_svc::sys::EspError;
 use uuid::Uuid;
+use crate::storage::session_config::{SessionConfig, SessionType};
 
 const NAMESPACE: &str = "session";
 const KEY_UUID: &str = "uuid";
@@ -96,5 +97,38 @@ impl NvsManager {
 
     pub fn set_pm2_5_index(&mut self, pm_index: u8) -> Result<(), EspError> {
         self.nvs.set_u8(KEY_PM2_5_INDEX, pm_index)
+    }
+
+    pub fn get_session_config(&self) -> Result<Option<SessionConfig>, EspError> {
+        let uuid = match self.get_uuid()? {
+            Some(u) => u,
+            None => return Ok(None),
+        };
+
+        let interval = match self.get_measurement_interval()? {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+
+        let is_mobile = match self.get_is_mobile()? {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        // 2. Determine SessionType
+        let Some(session_type) = (if is_mobile {
+            Some(SessionType::MOBILE)
+        } else {
+            self.get_pm1_index()?.zip(self.get_pm2_5_index()?)
+                .zip(self.get_wifi_ssid()?)
+                .zip(self.get_wifi_password()?)
+                .map(|(((p1, p2), ssid), pass)| SessionType::FIXED {
+                    pm1_index: p1, pm2_5_index: p2, wifi_ssid: ssid, wifi_password: pass
+                })
+        }) else {
+            return Ok(None);
+        };
+
+        Ok(Some(SessionConfig::new(uuid, interval, session_type)))
     }
 }
