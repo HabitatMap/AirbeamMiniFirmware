@@ -1,8 +1,9 @@
 mod led;
 mod sensor;
 mod storage;
-mod setup;
+mod ble;
 
+use std::fmt::Debug;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
@@ -14,6 +15,8 @@ use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use log::info;
+use crate::ble::SetupResult;
+use crate::ble::SetupResult::Continue;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
@@ -68,7 +71,30 @@ fn main() -> anyhow::Result<()> {
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs)?;
+    let mut ble = ble::BleManager::new("AirBeamMini2")?;
+
+    let result = ble.run_setup(
+        None,           // no saved config
+        false,          // no measurements stored
+        || {
+            log::info!("TODO: clear storage");
+            Ok(())
+        },
+        || {
+            log::info!("TODO: sync storage");
+            Ok(())
+        },
+        |ssid, password| {
+            log::info!("TODO: connect to wifi '{}' / '{}'", ssid, password);
+            Ok(())
+        },
+    )?;;
     loop {
+        match result {
+            SetupResult::StartNew(_) => { info!("New session") },
+            SetupResult::Continue => { info!("continue") },
+            SetupResult::Disconnect => { info!("Disconnected") },
+        }
         let is_mobile = nvs_manager.get_is_mobile()?;
         info!("Is logged in: {:?}", is_mobile);
         nvs_manager.set_is_mobile(true)?;

@@ -1,0 +1,276 @@
+mod ble_protocol;
+
+use std::sync::{Arc, Mutex, Condvar};
+use std::time::{Duration, SystemTime};
+use esp32_nimble::{
+    enums::{ConnMode, DiscMode},
+    uuid128,
+    BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
+};
+use esp32_nimble::enums::AuthReq;
+use esp32_nimble::utilities::BleUuid;
+use log::{info, warn};
+use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
+use crate::storage::session_config::{SessionConfig, SessionType};
+use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
+use esp_idf_svc::sys::{settimeofday, timeval};
+
+const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
+const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
+const COMMAND_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0003-4b3c-8e9a-1f2d3c4b5a60");
+const RESPONSE_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0004-4b3c-8e9a-1f2d3c4b5a60");
+const FIXED_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+#[derive(Debug)]
+pub enum SetupResult {
+    Continue,
+    StartNew(SessionConfig),
+    Disconnect
+}
+
+pub struct BleManager {
+    // characteristic handles — set once during init, then read-only
+    status_chr: Arc<NimbleMutex<BLECharacteristic>>,
+    response_chr: Arc<NimbleMutex<BLECharacteristic>>,
+    // keep server alive
+    _ble_device: &'static BLEDevice,
+
+    cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
+    cmd_tx: std::sync::mpsc::Sender<AppCommand>,
+}
+
+
+impl BleManager {
+    pub fn new(device_name: &str) -> anyhow::Result<Self> {
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        // ── 1. Get the NimBLE singleton ──────────────────────────────────
+        let ble_device = BLEDevice::take();
+        ble_device
+            .security()
+            .set_auth(AuthReq::Bond)
+            .resolve_rpa();
+
+        // ── 2. Set up GATT server ────────────────────────────────────────
+        let server = ble_device.get_server();
+
+        // connection / disconnection callback
+        server.on_connect(move |server, desc| {
+            info!("BLE client connected, conn_handle={}", desc.conn_handle());
+            let _ = server.update_conn_params(desc.conn_handle(), 6, 24, 0, 200);
+        });
+
+        server.on_disconnect(move |_desc, reason| {
+            info!("BLE client disconnected");
+            //TODO reconnect attempt if mobile session in progress
+        });
+
+        // ── 3. Create service + characteristics ──────────────────────────
+        let service = server.create_service(SERVICE_UUID);
+
+        // Status: notify-only (device → app on connect)
+        let status_chr = service.lock().create_characteristic(
+            STATUS_CHAR_UUID,
+            NimbleProperties::READ | NimbleProperties::NOTIFY,
+        );
+
+        // Command: write (app → device)
+        let command_chr = service.lock().create_characteristic(
+            COMMAND_CHAR_UUID,
+            NimbleProperties::WRITE,
+        );
+        let cmd_tx_clone = cmd_tx.clone();
+        command_chr.lock().on_write(move |args| {
+            let data = args.recv_data();
+            match AppCommand::decode(data) {
+                Some(cmd) => {
+                    info!("BLE command received: {:?}", cmd);
+                    if let Err(e) = cmd_tx_clone.send(cmd) {
+                        warn!("BLE command send failed: {:?}", e);
+                    }
+                }
+                None => {
+                    warn!("BLE: unparseable command ({} bytes)", data.len());
+                }
+            }
+        });
+
+        // Response: notify-only (device → app for ack/nack/sync chunks)
+        let response_chr = service.lock().create_characteristic(
+            RESPONSE_CHAR_UUID,
+            NimbleProperties::READ | NimbleProperties::NOTIFY,
+        );
+
+        // ── 4. Start advertising ─────────────────────────────────────────
+        let advertising = ble_device.get_advertising();
+        advertising
+            .lock()
+            .set_data(
+                BLEAdvertisementData::new()
+                    .name(device_name)
+                    .add_service_uuid(SERVICE_UUID),
+            )?;
+
+        advertising
+            .lock()
+            .advertisement_type(ConnMode::Und)
+            .disc_mode(DiscMode::Gen);
+
+        advertising.lock().start()?;
+        info!("BLE advertising started as '{}'", device_name);
+
+        Ok(Self {
+            status_chr,
+            response_chr,
+            _ble_device: ble_device,
+            cmd_rx,
+            cmd_tx,
+        })
+    }
+
+    /// Run the setup handshake. Blocks the calling thread until a config is obtained.
+    pub fn run_setup<F1, F2, W>(
+        &mut self,
+        saved_config: Option<SessionConfig>,
+        has_measurements: bool,
+        clear_storage: F1,
+        sync_storage: F2,
+        connect_to_wifi: W,
+    ) -> anyhow::Result<SetupResult>
+    where
+        F1: Fn() -> anyhow::Result<()>,
+        F2: Fn() -> anyhow::Result<()>,
+        W: Fn(&str, &str) -> anyhow::Result<()> {
+
+        self.wait_for_connection(Self::get_timeout(saved_config.clone()))?;
+        // small delay so the client has time to subscribe to notifications
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let status = if let Some(config) = saved_config.clone() {
+           DeviceStatus::HasSavedSession { session: config.session_uuid, has_measurements}
+        } else {
+            DeviceStatus::Idle
+        };
+
+        self.notify_status(&status)?;
+
+        loop {
+            // blocks until the app writes to the command characteristic
+            let cmd = self.cmd_rx.recv()?;
+
+            match cmd {
+                AppCommand::ContinueSession => {
+                    if has_measurements {
+                        self.send_response(DeviceResponse::Nack(ErrorCode::StorageHasMeasurements))?;
+                    } else if saved_config.is_none() {
+                        self.send_response(DeviceResponse::Nack(ErrorCode::NoSession))?;
+                    } else {
+                        self.send_response(DeviceResponse::Ack)?;
+                        return Ok(SetupResult::Continue);
+                    }
+                },
+
+                AppCommand::DiscardSession => {
+                    self.send_response(DeviceResponse::Ack)?;
+                    match clear_storage() {
+                        Ok(()) => self.send_response(DeviceResponse::Ready)?,
+                        Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?,
+                    }
+                },
+
+                AppCommand::StartSync => {
+                    self.send_response(DeviceResponse::Ack)?;
+                    match sync_storage() {
+                        Ok(()) => self.send_response(DeviceResponse::Ready)?,
+                        Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?,
+                    }
+                },
+
+                AppCommand::NewSessionConfig(config) => {
+                    self.send_response(DeviceResponse::Ack)?;
+                    if let SessionType::FIXED {
+                        pm1_index,
+                        pm2_5_index,
+                        wifi_ssid,
+                        wifi_password
+                    } = &config.session_type {
+                        match connect_to_wifi(wifi_ssid, wifi_password) {
+                            Ok(()) => {
+                                self.send_response(DeviceResponse::Ready)?;
+                                 return Ok(SetupResult::StartNew(config));
+                            },
+                            Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?,
+                        }
+                    } else {
+                        self.send_response(DeviceResponse::Ready)?;
+                        return Ok(SetupResult::StartNew(config))
+                    }
+                }
+                AppCommand::GetSensors => {
+                    self.send_response(DeviceResponse::SensorInfo)?;
+                    info!("BLE: Return sensors");
+                }
+                AppCommand::SetTime(time_epoch) => {
+                    let tv = timeval {
+                        tv_sec: time_epoch,
+                        tv_usec: 0,
+                    };
+                    unsafe { settimeofday(&tv, std::ptr::null()) };
+                    info!("BLE: Set time to {}", time_epoch);
+                }
+            }
+        }
+    }
+
+    /// Restart advertising after a disconnect (call from your reconnect logic)
+    pub fn restart_advertising(&self) -> anyhow::Result<()> {
+        self._ble_device.get_advertising().lock().start()?;
+        info!("BLE re-advertising");
+        Ok(())
+    }
+    /// returns true if we connected, false if we timed out
+    fn wait_for_connection(&self, timeout: Option<Duration>) -> anyhow::Result<bool> {
+        let server = self._ble_device.get_server();
+        let start = std::time::Instant::now();
+
+        loop {
+            if server.connected_count() > 0 {
+                log::info!("BLE client connected");
+                return Ok(true);
+            }
+
+            if let Some(t) = timeout {
+                if start.elapsed() >= t {
+                    return Ok(false);
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn get_timeout(session_config: Option<SessionConfig>) -> Option<Duration> {
+        if let Some(config) = session_config {
+            if matches!(config.session_type, SessionType::FIXED { .. }) { Some(FIXED_SESSION_TIMEOUT) }
+            else { None }
+        } else {
+            None
+        }
+    }
+
+    fn notify_status(&self, status: &DeviceStatus) -> anyhow::Result<()> {
+        let mut buf = [0u8; 20];
+        let len = status.encode(&mut buf);
+        self.status_chr.lock().set_value(&buf[..len]).notify();
+        Ok(())
+    }
+
+    fn send_response(&self, resp: DeviceResponse) -> anyhow::Result<()> {
+        let mut buf = [0u8; 244]; // max we'll send in one notification
+        let len = resp.encode(&mut buf);
+        self.response_chr.lock().set_value(&buf[..len]).notify();
+        Ok(())
+    }
+    fn is_connected(&self) -> bool {
+        self._ble_device.get_server().connected_count() > 0
+    }
+}
+
