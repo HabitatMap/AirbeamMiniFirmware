@@ -2,6 +2,7 @@ mod led;
 mod sensor;
 mod storage;
 mod setup;
+mod ble;
 
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
