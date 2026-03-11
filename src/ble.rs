@@ -23,8 +23,7 @@ const FIXED_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug)]
 pub enum SetupResult {
     Continue,
-    StartNew(SessionConfig),
-    Disconnect
+    StartNew(SessionConfig)
 }
 
 pub struct BleManager {
@@ -187,8 +186,8 @@ impl BleManager {
                 AppCommand::NewSessionConfig(config) => {
                     self.send_response(DeviceResponse::Ack)?;
                     if let SessionType::FIXED {
-                        pm1_index,
-                        pm2_5_index,
+                        pm1_index: _,
+                        pm2_5_index: _,
                         wifi_ssid,
                         wifi_password
                     } = &config.session_type {
@@ -197,7 +196,7 @@ impl BleManager {
                                 self.send_response(DeviceResponse::Ready)?;
                                  return Ok(SetupResult::StartNew(config));
                             },
-                            Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?,
+                            Err(_) => self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?,
                         }
                     } else {
                         self.send_response(DeviceResponse::Ready)?;
@@ -220,7 +219,7 @@ impl BleManager {
         }
     }
 
-    /// Restart advertising after a disconnect (call from your reconnect logic)
+    /// Restart advertising after a disconnect
     pub fn restart_advertising(&self) -> anyhow::Result<()> {
         self._ble_device.get_advertising().lock().start()?;
         info!("BLE re-advertising");

@@ -1,12 +1,5 @@
-use esp32_nimble::utilities::BleUuid;
-use esp32_nimble::uuid128;
 use uuid::Uuid;
 use crate::storage::session_config::{SessionConfig, SessionType};
-
-pub const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
-pub const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
-pub const COMMAND_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0003-4b3c-8e9a-1f2d3c4b5a60");
-pub const RESPONSE_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0004-4b3c-8e9a-1f2d3c4b5a60");
 pub const SENSOR_INFO: &str = "PM1,μg/m3;PM2.5,μg/m3";
 /// Commands the app writes to the device
 /// All data in LowEndian

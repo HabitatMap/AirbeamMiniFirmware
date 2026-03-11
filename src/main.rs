@@ -3,7 +3,6 @@ mod sensor;
 mod storage;
 mod ble;
 
-use std::fmt::Debug;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
@@ -16,7 +15,6 @@ use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use log::info;
 use crate::ble::SetupResult;
-use crate::ble::SetupResult::Continue;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
@@ -93,7 +91,6 @@ fn main() -> anyhow::Result<()> {
         match result {
             SetupResult::StartNew(_) => { info!("New session") },
             SetupResult::Continue => { info!("continue") },
-            SetupResult::Disconnect => { info!("Disconnected") },
         }
         let is_mobile = nvs_manager.get_is_mobile()?;
         info!("Is logged in: {:?}", is_mobile);

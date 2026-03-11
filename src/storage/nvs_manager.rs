@@ -26,13 +26,13 @@ impl NvsManager {
     }
 
     pub fn clear_all(&mut self) -> Result<(), EspError> {
-        self.nvs.remove(KEY_UUID)?;
-        self.nvs.remove(KEY_WIFI_SSID)?;
-        self.nvs.remove(KEY_WIFI_PASS)?;
-        self.nvs.remove(KEY_IS_MOBILE)?;
-        self.nvs.remove(KEY_MEASUREMENT_INTERVAL)?;
-        self.nvs.remove(KEY_PM1_INDEX)?;
-        self.nvs.remove(KEY_PM2_5_INDEX)?;
+        let _ = self.nvs.remove(KEY_UUID);
+        let _ = self.nvs.remove(KEY_WIFI_SSID);
+        let _ = self.nvs.remove(KEY_WIFI_PASS);
+        let _ = self.nvs.remove(KEY_IS_MOBILE);
+        let _ = self.nvs.remove(KEY_MEASUREMENT_INTERVAL);
+        let _ = self.nvs.remove(KEY_PM1_INDEX);
+        let _ = self.nvs.remove(KEY_PM2_5_INDEX);
         Ok(())
     }
 
