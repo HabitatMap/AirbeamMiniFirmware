@@ -18,16 +18,14 @@ const WAKE_UP_SECONDS: u64 = 5;
 const SENSOR_READOUT_TIMEOUT: u16 = 2300; //Longest possible time between the readouts
 #[derive(Debug, Clone, Copy)]
 pub struct Measurement {
-    pm1_0_avg: u32,
-    pm2_5_avg: u32,
-    pub raw: u16,
+    pub pm1_0_avg: u16,
+    pub pm2_5_avg: u16,
 }
 impl From<PmsMeasurement> for Measurement {
     fn from(value: PmsMeasurement) -> Self {
         Measurement {
-            pm1_0_avg: value.pm1_0_atm as u32,
-            pm2_5_avg: value.pm2_5_atm as u32,
-            raw: value.pm1_0_atm
+            pm1_0_avg: value.pm1_0_atm,
+            pm2_5_avg: value.pm2_5_atm,
         }
     }
 }
@@ -42,6 +40,13 @@ impl SensorDriver {
                 uart: Arc::new(Mutex::new(uart)),
             }
     }
+
+    pub fn sleep(&self) {
+        if let Ok(uart) = self.uart.lock() {
+            let _ = uart.write(&CMD_SLEEP);
+        }
+    }
+
     pub fn start_sensor_task(&self, period: Duration) -> (Receiver<Measurement>, Sender<()>) {
         // 1. Take the receiver out of the struct (leaving None behind)
         // This ensures we can't start the thread twice.
@@ -140,8 +145,8 @@ impl SensorDriver {
         while duration > instant.elapsed() {
             read_command();
             if let Some(parsed) = Self::read_uart(&mut read_byte, duration) {
-                pm1_0_sum += parsed.pm1_0_avg;
-                pm2_5_sum += parsed.pm2_5_avg;
+                pm1_0_sum += parsed.pm1_0_avg as u32;
+                pm2_5_sum += parsed.pm2_5_avg as u32;
                 count += 1;
                 log::info!("Read successful. Count: {}", count);
                 read_command();
@@ -152,9 +157,8 @@ impl SensorDriver {
             let final_pm1 = pm1_0_sum / count;
             let final_pm25 = pm2_5_sum / count;
             Some(Measurement {
-                pm1_0_avg: final_pm1,
-                pm2_5_avg: final_pm25,
-                raw: final_pm1 as u16
+                pm1_0_avg: final_pm1 as u16,
+                pm2_5_avg: final_pm25 as u16,
             })
         } else {
             None

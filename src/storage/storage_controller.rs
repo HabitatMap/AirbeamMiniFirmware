@@ -18,18 +18,20 @@ const BUFFER_CAPACITY: usize = 128;
 #[derive(Debug, Clone, Copy)]
 pub struct MeasurementRecord {
     pub timestamp: u32,
-    pub raw: u16,
+    pub pm1: u16,
+    pub pm2_5: u16,
 }
 
 impl MeasurementRecord {
-    pub fn new(timestamp: u32, raw: u16) -> Self {
-        Self { timestamp, raw }
+    pub fn new(timestamp: u32, pm1: u16, pm2_5: u16) -> Self {
+        Self { timestamp, pm1, pm2_5 }
     }
 
     pub fn from_measurement(m: &Measurement, timestamp: u32) -> Self {
         Self {
             timestamp,
-            raw: m.raw,
+            pm1: m.pm1_0_avg,
+            pm2_5: m.pm2_5_avg,
         }
     }
 }
@@ -93,7 +95,7 @@ impl StorageManager {
 
                 for record in &inner.buffer {
                     let ts_bytes = record.timestamp.to_be_bytes();
-                    let raw_bytes = record.raw.to_be_bytes();
+                    let raw_bytes = record.pm1.to_be_bytes();
 
                     // XOR checksum over timestamp and raw bytes
                     let mut checksum: u8 = 0;

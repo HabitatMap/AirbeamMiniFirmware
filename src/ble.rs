@@ -2,11 +2,7 @@ mod ble_protocol;
 
 use std::sync::{Arc, Mutex, Condvar};
 use std::time::{Duration, SystemTime};
-use esp32_nimble::{
-    enums::{ConnMode, DiscMode},
-    uuid128,
-    BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
-};
+use esp32_nimble::{enums::{ConnMode, DiscMode}, uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties, NotifyTxStatus};
 use esp32_nimble::enums::AuthReq;
 use esp32_nimble::utilities::BleUuid;
 use log::{info, warn};
@@ -14,11 +10,15 @@ use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCo
 use crate::storage::session_config::{SessionConfig, SessionType};
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp_idf_svc::sys::{settimeofday, timeval};
+use crate::SendingError;
+use crate::sensor::sensor_thread::Measurement;
+use crate::storage::storage_controller::MeasurementRecord;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
 const COMMAND_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0003-4b3c-8e9a-1f2d3c4b5a60");
 const RESPONSE_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0004-4b3c-8e9a-1f2d3c4b5a60");
+const MEASUREMENT_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0005-4b3c-8e9a-1f2d3c4b5a60");
 const FIXED_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug)]
 pub enum SetupResult {
@@ -30,17 +30,20 @@ pub struct BleManager {
     // characteristic handles — set once during init, then read-only
     status_chr: Arc<NimbleMutex<BLECharacteristic>>,
     response_chr: Arc<NimbleMutex<BLECharacteristic>>,
-    // keep server alive
-    _ble_device: &'static BLEDevice,
-
+    measurement_chr: Arc<NimbleMutex<BLECharacteristic>>,
+    //channels for BLE data
+    notify_status: std::sync::mpsc::Receiver<NotifyTxStatus>,
     cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
     cmd_tx: std::sync::mpsc::Sender<AppCommand>,
+    // keep server alive
+    _ble_device: &'static BLEDevice,
 }
 
 
 impl BleManager {
     pub fn new(device_name: &str) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (notify_status_tx, notify_status_rx) = std::sync::mpsc::channel();
         // ── 1. Get the NimBLE singleton ──────────────────────────────────
         let ble_device = BLEDevice::take();
         ble_device
@@ -92,6 +95,16 @@ impl BleManager {
             }
         });
 
+        let measurement_chr = service.lock().create_characteristic(
+            MEASUREMENT_CHAR_UUID,
+            NimbleProperties::INDICATE
+        );
+        let clone_notify_status_tx = notify_status_tx.clone();
+        measurement_chr.lock().on_notify_tx(move |tx| {
+            let status = tx.status();
+            let _ = clone_notify_status_tx.send(status);
+        });
+
         // Response: notify-only (device → app for ack/nack/sync chunks)
         let response_chr = service.lock().create_characteristic(
             RESPONSE_CHAR_UUID,
@@ -119,9 +132,11 @@ impl BleManager {
         Ok(Self {
             status_chr,
             response_chr,
-            _ble_device: ble_device,
+            measurement_chr,
+            notify_status: notify_status_rx,
             cmd_rx,
             cmd_tx,
+            _ble_device: ble_device,
         })
     }
 
@@ -130,6 +145,7 @@ impl BleManager {
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
+        battery_level: u8,
         clear_storage: F1,
         sync_storage: F2,
         connect_to_wifi: W,
@@ -144,9 +160,9 @@ impl BleManager {
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         let status = if let Some(config) = saved_config.clone() {
-           DeviceStatus::HasSavedSession { session: config.session_uuid, has_measurements}
+           DeviceStatus::HasSavedSession { battery_level, session: config.session_uuid, has_measurements}
         } else {
-            DeviceStatus::Idle
+            DeviceStatus::Idle(battery_level)
         };
 
         self.notify_status(&status)?;
@@ -159,11 +175,16 @@ impl BleManager {
                 AppCommand::ContinueSession => {
                     if has_measurements {
                         self.send_response(DeviceResponse::Nack(ErrorCode::StorageHasMeasurements))?;
-                    } else if saved_config.is_none() {
-                        self.send_response(DeviceResponse::Nack(ErrorCode::NoSession))?;
                     } else {
-                        self.send_response(DeviceResponse::Ack)?;
-                        return Ok(SetupResult::Continue);
+                        match saved_config {
+                            Some(_) => {
+                                self.send_response(DeviceResponse::Ack)?;
+                                return Ok(SetupResult::Continue);
+                            }
+                            None => {
+                                self.send_response(DeviceResponse::Nack(ErrorCode::NoSession))?;
+                            }
+                        }
                     }
                 },
 
@@ -217,6 +238,32 @@ impl BleManager {
                 }
             }
         }
+    }
+
+    pub fn send_measurement(&self, measurement: &Measurement, time: u32) -> Result<(), SendingError> {
+        if !self.is_connected() {
+            return Err(SendingError::ConnectionError);
+        }
+
+        let mut buf = [0u8; 11];
+        buf[0] = 1_u8;
+        buf[1..5].copy_from_slice(time.to_le_bytes().as_slice());
+        buf[5..9].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
+        buf[9..11].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
+
+        while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
+
+        self.measurement_chr.lock().set_value(&buf).notify();
+        if let Ok(status) = self.notify_status.recv_timeout(Duration::from_secs(1)) {
+            match status {
+                NotifyTxStatus::SuccessIndicate => Ok(()),
+                NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
+                NotifyTxStatus::ErrorIndicateTimeout => Err(SendingError::Retry),
+                NotifyTxStatus::ErrorIndicateDisabled |
+                NotifyTxStatus::ErrorGatt => Err(SendingError::ConfigError),
+                _ => Err(SendingError::Retry)
+            }
+        } else { Err(SendingError::Retry) }
     }
 
     /// Restart advertising after a disconnect

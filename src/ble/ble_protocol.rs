@@ -84,25 +84,38 @@ impl DeviceResponse {
 }
 
 pub enum DeviceStatus {
-    Idle,
+    Idle(u8),
     HasSavedSession {
+        battery_level: u8,
         session: Uuid,
         has_measurements: bool,
+    },
+    Running {
+        battery_level: u8,
+        session: Uuid,
     }
 }
 
 impl DeviceStatus {
-    pub fn encode(&self, buf: &mut [u8]) -> usize{
+    pub fn encode(&self, buf: &mut [u8]) -> usize {
         match self {
-            Self::Idle => {
+            Self::Idle (battery_level) => {
                 buf[0] = 0x00;
-                buf.len()
+                buf[1] = *battery_level;
+                2
             }
-            Self::HasSavedSession { session, has_measurements } => {
+            Self::HasSavedSession { battery_level, session, has_measurements } => {
                 buf[0] = 0x01;
-                buf[1..17].copy_from_slice(&session.to_bytes_le());
-                buf[17] = *has_measurements as u8;
-                buf.len()
+                buf[1] = *battery_level;
+                buf[2..18].copy_from_slice(&session.to_bytes_le());
+                buf[18] = *has_measurements as u8;
+                19
+            }
+            Self::Running { battery_level, session } => {
+                buf[0] = 0x02;
+                buf[1] = *battery_level;
+                buf[2..18].copy_from_slice(&session.to_bytes_le());
+                18
             }
         }
     }

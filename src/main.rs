@@ -7,18 +7,19 @@ use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::io::vfs::MountedLittlefs;
-use log::info;
+use log::{error, info};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
-use crate::sensor::sensor_thread::SensorDriver;
+use crate::sensor::sensor_thread::{Measurement, SensorDriver};
 use crate::storage::nvs_manager::NvsManager;
-use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
+use crate::storage::session_config::SessionType;
+use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
 
 
 fn main() -> anyhow::Result<()> {
@@ -66,41 +67,80 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     let sensor = SensorDriver::new(uart);
+    sensor.sleep(); //no need for sensor to be running during setup process
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs)?;
     let mut ble = ble::BleManager::new("AirBeamMini2")?;
 
+    let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
+        nvs_manager.clear_all();
+        error!("Failed to get session config: {:?}", e);
+        None
+    });
+
     let result = ble.run_setup(
-        None,           // no saved config
-        false,          // no measurements stored
+        config,
+        storage.has_measurements(),
+        102_u8, //TODO: get battery level
         || {
-            log::info!("TODO: clear storage");
+            info!("TODO: clear storage");
             Ok(())
         },
         || {
-            log::info!("TODO: sync storage");
+            info!("TODO: sync storage");
             Ok(())
         },
         |ssid, password| {
-            log::info!("TODO: connect to wifi '{}' / '{}'", ssid, password);
+            info!("TODO: connect to wifi '{}' / '{}'", ssid, password);
             Ok(())
         },
     )?;;
-    loop {
-        match result {
-            SetupResult::StartNew(_) => { info!("New session") },
-            SetupResult::Continue => { info!("continue") },
+
+    let connected = || { true };
+    let sync_stopped = || { false };
+
+    let config = if let SetupResult::StartNew(config) = result {
+        nvs_manager.set_session_config(&config)?;
+        config
+    } else { nvs_manager.get_session_config()?.unwrap() };
+
+    let send_measurement = |m: Measurement, t: u32| -> Result<(), SendingError> {
+        match &config.session_type {
+            SessionType::MOBILE => ble.send_measurement(&m, t),
+            SessionType::FIXED { pm1_index, pm2_5_index, wifi_ssid, wifi_password } => {
+                Ok(())
+            }
         }
-        let is_mobile = nvs_manager.get_is_mobile()?;
-        info!("Is logged in: {:?}", is_mobile);
-        nvs_manager.set_is_mobile(true)?;
-        let size = storage.total_measurement_count();
-        info!("Stored {} measurements", size);
-        led_command.send(LedCommand::Continuous(Color::RED))?;
-        info!("Red LED on");
-        led_command.send(LedCommand::Off)?;
-        info!("Red LED off");
-        thread::sleep(Duration::from_secs(3));
+    };
+
+    let (measurement_rx, stop_tx) = sensor.start_sensor_task(config.interval);
+
+    loop {
+        let measurement = measurement_rx.recv()?;
+        let measurement_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as u32;
+
+        if let Err(e) = send_measurement(measurement, measurement_time) {
+            match e {
+                SendingError::Retry => {
+                    if let Err(e) = send_measurement(measurement, measurement_time) {
+                        storage.save_measurement(MeasurementRecord::from_measurement(&measurement, measurement_time))?;
+                    }
+                }
+                SendingError::ConfigError => {} //TODO: break the session loop
+                SendingError::ConnectionError =>
+                    storage.save_measurement(MeasurementRecord::from_measurement(&measurement, measurement_time))?
+            }
+        }
+
+        if sync_stopped() && storage.has_measurements() && connected() {
+            //TODO: start sync thread
+        }
     }
+}
+
+enum SendingError {
+    ConfigError,
+    ConnectionError,
+    Retry
 }

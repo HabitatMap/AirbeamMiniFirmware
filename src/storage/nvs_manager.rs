@@ -25,7 +25,7 @@ impl NvsManager {
         Ok(Self { nvs })
     }
 
-    pub fn clear_all(&mut self) -> Result<(), EspError> {
+    pub fn clear_all(&mut self) {
         let _ = self.nvs.remove(KEY_UUID);
         let _ = self.nvs.remove(KEY_WIFI_SSID);
         let _ = self.nvs.remove(KEY_WIFI_PASS);
@@ -33,7 +33,6 @@ impl NvsManager {
         let _ = self.nvs.remove(KEY_MEASUREMENT_INTERVAL);
         let _ = self.nvs.remove(KEY_PM1_INDEX);
         let _ = self.nvs.remove(KEY_PM2_5_INDEX);
-        Ok(())
     }
 
     pub fn get_uuid(&self) -> Result<Option<Uuid>, EspError> {
@@ -130,5 +129,22 @@ impl NvsManager {
         };
 
         Ok(Some(SessionConfig::new(uuid, interval, session_type)))
+    }
+    pub fn set_session_config(&mut self, config: &SessionConfig) -> Result<(), EspError> {
+        self.set_uuid(&config.session_uuid)?;
+        self.set_measurement_interval(config.interval)?;
+        match &config.session_type {
+            SessionType::MOBILE => {
+                self.set_is_mobile(true)?;
+            },
+            SessionType::FIXED { pm1_index, pm2_5_index, wifi_ssid, wifi_password } => {
+                self.set_is_mobile(false)?;
+                self.set_pm1_index(*pm1_index)?;
+                self.set_pm2_5_index(*pm2_5_index)?;
+                self.set_wifi_ssid(&wifi_ssid)?;
+                self.set_wifi_password(&wifi_password)?;
+            }
+        }
+        Ok(())
     }
 }
