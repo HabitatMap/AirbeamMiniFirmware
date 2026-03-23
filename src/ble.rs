@@ -245,11 +245,11 @@ impl BleManager {
             return Err(SendingError::ConnectionError);
         }
 
-        let mut buf = [0u8; 11];
+        let mut buf = [0u8; 9];
         buf[0] = 1_u8;
         buf[1..5].copy_from_slice(time.to_le_bytes().as_slice());
-        buf[5..9].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
-        buf[9..11].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
+        buf[5..7].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
+        buf[7..9].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
 
         while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
 

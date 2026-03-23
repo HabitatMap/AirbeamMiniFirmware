@@ -1,26 +1,25 @@
+mod ble;
 mod led;
 mod sensor;
 mod storage;
-mod ble;
 
-use esp_idf_svc::hal::prelude::*;
-use esp_idf_svc::eventloop::EspSystemEventLoop;
-use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use esp_idf_svc::hal::gpio;
-use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
-use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
-use esp_idf_svc::fs::littlefs::Littlefs;
-use esp_idf_svc::io::vfs::MountedLittlefs;
-use log::{error, info};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::{Measurement, SensorDriver};
 use crate::storage::nvs_manager::NvsManager;
 use crate::storage::session_config::SessionType;
 use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
-
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::fs::littlefs::Littlefs;
+use esp_idf_svc::hal::gpio;
+use esp_idf_svc::hal::prelude::*;
+use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
+use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
+use esp_idf_svc::io::vfs::MountedLittlefs;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use log::{error, info};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -83,10 +82,7 @@ fn main() -> anyhow::Result<()> {
         config,
         storage.has_measurements(),
         102_u8, //TODO: get battery level
-        || {
-            info!("TODO: clear storage");
-            Ok(())
-        },
+        || storage.clear_measurements(),
         || {
             info!("TODO: sync storage");
             Ok(())
@@ -95,22 +91,27 @@ fn main() -> anyhow::Result<()> {
             info!("TODO: connect to wifi '{}' / '{}'", ssid, password);
             Ok(())
         },
-    )?;;
+    )?;
 
-    let connected = || { true };
-    let sync_stopped = || { false };
+    let connected = || true;
+    let sync_stopped = || false;
 
     let config = if let SetupResult::StartNew(config) = result {
         nvs_manager.set_session_config(&config)?;
         config
-    } else { nvs_manager.get_session_config()?.unwrap() };
+    } else {
+        nvs_manager.get_session_config()?.unwrap()
+    };
 
     let send_measurement = |m: Measurement, t: u32| -> Result<(), SendingError> {
         match &config.session_type {
             SessionType::MOBILE => ble.send_measurement(&m, t),
-            SessionType::FIXED { pm1_index, pm2_5_index, wifi_ssid, wifi_password } => {
-                Ok(())
-            }
+            SessionType::FIXED {
+                pm1_index,
+                pm2_5_index,
+                wifi_ssid,
+                wifi_password,
+            } => Ok(()),
         }
     };
 
@@ -124,12 +125,16 @@ fn main() -> anyhow::Result<()> {
             match e {
                 SendingError::Retry => {
                     if let Err(e) = send_measurement(measurement, measurement_time) {
-                        storage.save_measurement(MeasurementRecord::from_measurement(&measurement, measurement_time))?;
+                        storage.save_measurement(MeasurementRecord::from_measurement(
+                            &measurement,
+                            measurement_time,
+                        ))?;
                     }
                 }
                 SendingError::ConfigError => {} //TODO: break the session loop
-                SendingError::ConnectionError =>
-                    storage.save_measurement(MeasurementRecord::from_measurement(&measurement, measurement_time))?
+                SendingError::ConnectionError => storage.save_measurement(
+                    MeasurementRecord::from_measurement(&measurement, measurement_time),
+                )?, //TODO: on error hold until connection
             }
         }
 
@@ -142,5 +147,5 @@ fn main() -> anyhow::Result<()> {
 enum SendingError {
     ConfigError,
     ConnectionError,
-    Retry
+    Retry,
 }

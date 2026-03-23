@@ -1,116 +1,175 @@
+use crate::storage::storage_controller::{MeasurementRecord, START_BYTES};
+use esp_idf_svc::sys::vTaskDelay;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
-use crate::storage::storage_controller::{MeasurementRecord, RECORD_SIZE, START_BYTES};
+use std::io::{Read, Seek, SeekFrom, Write};
 
-const CHUNK_RECORDS: usize = 64;
-const CHUNK_SIZE: usize = CHUNK_RECORDS * RECORD_SIZE;
+const MAX_LINE_MEASUREMENTS: usize = 10;
+const MEASUREMENT_SIZE: usize = 8; // u32 + u16 + u16
+const LINE_HEADER_SIZE: usize = 3; // 0xAB + 0xBA + count: u8
+const MIN_LINE_SIZE: usize = LINE_HEADER_SIZE + MEASUREMENT_SIZE + 1;
+const MAX_LINE_SIZE: usize = LINE_HEADER_SIZE + MAX_LINE_MEASUREMENTS * MEASUREMENT_SIZE + 1;
+const BUF_CAPACITY: usize = 4096;
+#[derive(Debug, Clone)]
+pub struct MeasurementLine {
+    pub measurements: Vec<MeasurementRecord>,
+    /// Bytes from end of file to the start of this line.
+    /// Truncate file to `file_len - offset_from_end` to discard
+    /// this line and everything after it (including skipped corruption).
+    pub offset_from_end: u64,
+}
 
 pub struct MeasurementIter {
     file: File,
-    buf: [u8; CHUNK_SIZE],
-    /// Byte offset in the file where the current chunk starts
-    file_offset: u64,
-    /// Current position within buf (index into buf, counting backwards)
-    buf_pos: usize,
-    /// How many valid bytes are in buf
-    buf_len: usize,
+    buf: Vec<u8>,
+    buf_file_start: u64,
+    file_len: u64,
+    /// Points at the end of the next line to parse (moves left)
+    cursor: u64,
     done: bool,
 }
 
 impl MeasurementIter {
-    pub fn new(file: File) -> std::io::Result<Self> {
+    pub fn new(mut file: File) -> std::io::Result<Self> {
         let file_len = file.metadata()?.len();
+        let read_size = (file_len as usize).min(BUF_CAPACITY);
+        let start = file_len - read_size as u64;
+
+        file.seek(SeekFrom::Start(start))?;
+        let mut buf = vec![0u8; read_size];
+        file.read_exact(&mut buf)?;
+
         Ok(Self {
             file,
-            buf: [0u8; CHUNK_SIZE],
-            file_offset: file_len,
-            buf_pos: 0,
-            buf_len: 0,
+            buf,
+            buf_file_start: start,
+            file_len,
+            cursor: file_len,
             done: false,
         })
     }
 
-    fn load_prev_chunk(&mut self) -> bool {
-        if self.file_offset == 0 {
+    /// Extend buffer leftward to cover earlier file data.
+    fn extend_left(&mut self) -> bool {
+        if self.buf_file_start == 0 {
             return false;
         }
 
-        let read_size = (self.file_offset as usize).min(CHUNK_SIZE);
-        self.file_offset -= read_size as u64;
+        // Trim past cursor
+        let keep = (self.cursor - self.buf_file_start) as usize;
+        self.buf.truncate(keep);
 
-        if self.file.seek(SeekFrom::Start(self.file_offset)).is_err() {
+        let read_size = (self.buf_file_start as usize).min(BUF_CAPACITY);
+        let new_start = self.buf_file_start - read_size as u64;
+
+        if self.file.seek(SeekFrom::Start(new_start)).is_err() {
             return false;
         }
 
-        match self.file.read_exact(&mut self.buf[..read_size]) {
-            Ok(_) => {
-                self.buf_len = read_size;
-                self.buf_pos = read_size;
-                true
-            }
-            Err(_) => false,
+        let mut new_data = vec![0u8; read_size];
+        if self.file.read_exact(&mut new_data).is_err() {
+            return false;
         }
+
+        new_data.extend_from_slice(&self.buf);
+        self.buf = new_data;
+        self.buf_file_start = new_start;
+        true
     }
 
-    fn try_parse_record_at(&self, pos: usize) -> Option<MeasurementRecord> {
-        if pos + RECORD_SIZE > self.buf_len {
+    /// Try parsing a line that starts at `buf_pos` and ends exactly at cursor.
+    fn try_parse_at(&self, buf_pos: usize, end: usize) -> Option<Vec<MeasurementRecord>> {
+        let slice = &self.buf[buf_pos..end];
+        let len = slice.len();
+
+        if len < MIN_LINE_SIZE {
+            log::warn!("Skipping line with too few bytes: {}", len);
+            return None;
+        }
+        if slice[0] != START_BYTES[0] || slice[1] != START_BYTES[1] {
+            //log::warn!("Skipping line with invalid start bytes: {:02x}{:02x}", slice[0], slice[1]);
             return None;
         }
 
-        let chunk = &self.buf[pos..pos + RECORD_SIZE];
-
-        if chunk[0] != START_BYTES[0] || chunk[1] != START_BYTES[1] {
+        let count = slice[2] as usize;
+        if count == 0 || count > MAX_LINE_MEASUREMENTS {
+            log::warn!("Skipping line with invalid measurement count: {}", count);
             return None;
         }
 
-        let ts_bytes: [u8; 4] = chunk[2..6].try_into().unwrap();
-        let raw_bytes: [u8; 2] = chunk[6..8].try_into().unwrap();
-        let stored_checksum = chunk[8];
+        let expected = LINE_HEADER_SIZE + count * MEASUREMENT_SIZE + 1;
+        if len != expected {
+            log::warn!("Skipping line with invalid length: {}", len);
+            return None;
+        }
 
+        let stored_checksum = slice[len - 1];
         let mut checksum: u8 = 0;
-        for b in ts_bytes.iter().chain(raw_bytes.iter()) {
+        for &b in &slice[..len - 1] {
             checksum ^= b;
         }
-
         if checksum != stored_checksum {
+            log::warn!(
+                "Skipping line with invalid checksum: {:02x}",
+                stored_checksum
+            );
             return None;
         }
 
-        Some(MeasurementRecord {
-            timestamp: u32::from_be_bytes(ts_bytes),
-            raw: u16::from_be_bytes(raw_bytes),
-        })
+        let data = &slice[LINE_HEADER_SIZE..];
+        let mut measurements = Vec::with_capacity(count);
+        for i in 0..count {
+            let o = i * MEASUREMENT_SIZE;
+            measurements.push(MeasurementRecord {
+                timestamp: u32::from_le_bytes(data[o..o + 4].try_into().unwrap()),
+                pm1: u16::from_le_bytes(data[o + 4..o + 6].try_into().unwrap()),
+                pm2_5: u16::from_le_bytes(data[o + 6..o + 8].try_into().unwrap()),
+            });
+        }
+
+        Some(measurements)
     }
 }
 
 impl Iterator for MeasurementIter {
-    type Item = MeasurementRecord;
+    type Item = MeasurementLine;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
+        if self.done || self.cursor == 0 {
+            self.done = true;
             return None;
         }
 
         loop {
-            // Walk backwards through current buffer
-            while self.buf_pos >= RECORD_SIZE {
-                let candidate = self.buf_pos - RECORD_SIZE;
+            unsafe {
+                vTaskDelay(1);
+            }
+            let cursor_in_buf = (self.cursor - self.buf_file_start) as usize;
 
-                if let Some(record) = self.try_parse_record_at(candidate) {
-                    self.buf_pos = candidate;
-                    return Some(record);
+            let scan_lo = cursor_in_buf.saturating_sub(MAX_LINE_SIZE);
+            let scan_hi = cursor_in_buf.saturating_sub(MIN_LINE_SIZE);
+
+            if scan_lo < cursor_in_buf {
+                for pos in (scan_lo..=scan_hi).rev() {
+                    if let Some(measurements) = self.try_parse_at(pos, cursor_in_buf) {
+                        self.cursor = self.buf_file_start + pos as u64;
+                        return Some(MeasurementLine {
+                            measurements,
+                            offset_from_end: self.file_len - self.cursor,
+                        });
+                    }
                 }
 
-                // Resync: step back by 1 byte
-                self.buf_pos -= 1;
+                // Resync: step back 1 byte
+                self.cursor -= 1;
+                if self.cursor == 0 {
+                    self.done = true;
+                    return None;
+                }
+
+                continue;
             }
 
-            // Remaining bytes at the start of buf might be a partial record
-            // that spans the previous chunk — we need to handle the boundary.
-            // For simplicity, we just load the next chunk. If the file is
-            // well-formed, records align and we lose nothing. If corrupt,
-            // we skip at most one record at a chunk boundary.
-            if !self.load_prev_chunk() {
+            if !self.extend_left() {
                 self.done = true;
                 return None;
             }
