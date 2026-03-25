@@ -11,7 +11,12 @@ pub struct SessionConfig {
 #[derive(Clone, Debug)]
 pub enum SessionType {
     MOBILE,
-    FIXED{pm1_index: u8, pm2_5_index: u8, wifi_ssid: String, wifi_password: String},
+    FIXED {
+        pm1_index: u8,
+        pm2_5_index: u8,
+        wifi_ssid: String,
+        wifi_password: String,
+    },
 }
 
 impl SessionConfig {
@@ -21,7 +26,6 @@ impl SessionConfig {
     pub const PM_2_5_UNIT: &str = "μg/m3";
 
     pub fn new(session_uuid: Uuid, interval: Duration, session_type: SessionType) -> Self {
-
         Self {
             session_uuid,
             interval,

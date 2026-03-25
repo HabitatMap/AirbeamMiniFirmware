@@ -1,10 +1,10 @@
+use crate::led::led_thread::{Color, LedCommand};
 use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use esp_idf_svc::hal::uart::UartDriver;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use crate::led::led_thread::{Color, LedCommand};
 
 pub const START_BYTE_1: u8 = 0x42;
 pub const START_BYTE_2: u8 = 0x4D;
@@ -36,9 +36,9 @@ pub struct SensorDriver {
 
 impl SensorDriver {
     pub fn new(uart: UartDriver<'static>) -> Self {
-            Self {
-                uart: Arc::new(Mutex::new(uart)),
-            }
+        Self {
+            uart: Arc::new(Mutex::new(uart)),
+        }
     }
 
     pub fn sleep(&self) {
@@ -59,7 +59,8 @@ impl SensorDriver {
 
         thread::spawn(move || {
             log::info!("Sensor Thread: Started.");
-            if let Ok(uart) = uart_shared.lock() { //wake up sensor for active mode
+            if let Ok(uart) = uart_shared.lock() {
+                //wake up sensor for active mode
 
                 //We need to wake up the sensor for active mode,
                 // assumption is that sensor will be in sleep on start
@@ -89,16 +90,14 @@ impl SensorDriver {
                     }
 
                     let mut byte_buf = [0u8; 1];
-                    let read_byte=
-                        || match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT.into()) {
-                            Ok(_bytes) => Some(byte_buf),
-                            _ => None,
-                        };
-                    let read_command = || {
-                        match uart.write(&CMD_READ) {
-                            Ok(_bytes) => Some(()),
-                            _ => None,
-                        }
+                    let read_byte = || match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT.into())
+                    {
+                        Ok(_bytes) => Some(byte_buf),
+                        _ => None,
+                    };
+                    let read_command = || match uart.write(&CMD_READ) {
+                        Ok(_bytes) => Some(()),
+                        _ => None,
                     };
                     let _ = uart.clear_rx();
                     //for averaging_time <= 3 seconds, we read in active mode
@@ -106,7 +105,8 @@ impl SensorDriver {
                         Self::read_uart(read_byte, Duration::from_secs(3))
                     } else {
                         //for averaging_time > 3 seconds, we read for that period of time and average into one result
-                        let measurement = Self::averaging_loop(averaging_time, read_byte, read_command);
+                        let measurement =
+                            Self::averaging_loop(averaging_time, read_byte, read_command);
                         if should_sleep {
                             let _ = uart.write(&CMD_SLEEP);
                         }

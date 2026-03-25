@@ -1,18 +1,22 @@
 mod ble_protocol;
 
-use std::sync::{Arc, Mutex, Condvar};
-use std::time::{Duration, SystemTime};
-use esp32_nimble::{enums::{ConnMode, DiscMode}, uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties, NotifyTxStatus};
-use esp32_nimble::enums::AuthReq;
-use esp32_nimble::utilities::BleUuid;
-use log::{info, warn};
 use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
-use crate::storage::session_config::{SessionConfig, SessionType};
-use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
-use esp_idf_svc::sys::{settimeofday, timeval};
-use crate::SendingError;
 use crate::sensor::sensor_thread::Measurement;
+use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::MeasurementRecord;
+use crate::SendingError;
+use esp32_nimble::enums::AuthReq;
+use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
+use esp32_nimble::utilities::BleUuid;
+use esp32_nimble::{
+    enums::{ConnMode, DiscMode},
+    uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
+    NotifyTxStatus,
+};
+use esp_idf_svc::sys::{settimeofday, timeval};
+use log::{info, warn};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, SystemTime};
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
@@ -23,7 +27,7 @@ const FIXED_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug)]
 pub enum SetupResult {
     Continue,
-    StartNew(SessionConfig)
+    StartNew(SessionConfig),
 }
 
 pub struct BleManager {
@@ -39,17 +43,13 @@ pub struct BleManager {
     _ble_device: &'static BLEDevice,
 }
 
-
 impl BleManager {
     pub fn new(device_name: &str) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let (notify_status_tx, notify_status_rx) = std::sync::mpsc::channel();
         // ── 1. Get the NimBLE singleton ──────────────────────────────────
         let ble_device = BLEDevice::take();
-        ble_device
-            .security()
-            .set_auth(AuthReq::Bond)
-            .resolve_rpa();
+        ble_device.security().set_auth(AuthReq::Bond).resolve_rpa();
 
         // ── 2. Set up GATT server ────────────────────────────────────────
         let server = ble_device.get_server();
@@ -75,10 +75,9 @@ impl BleManager {
         );
 
         // Command: write (app → device)
-        let command_chr = service.lock().create_characteristic(
-            COMMAND_CHAR_UUID,
-            NimbleProperties::WRITE,
-        );
+        let command_chr = service
+            .lock()
+            .create_characteristic(COMMAND_CHAR_UUID, NimbleProperties::WRITE);
         let cmd_tx_clone = cmd_tx.clone();
         command_chr.lock().on_write(move |args| {
             let data = args.recv_data();
@@ -95,10 +94,9 @@ impl BleManager {
             }
         });
 
-        let measurement_chr = service.lock().create_characteristic(
-            MEASUREMENT_CHAR_UUID,
-            NimbleProperties::INDICATE
-        );
+        let measurement_chr = service
+            .lock()
+            .create_characteristic(MEASUREMENT_CHAR_UUID, NimbleProperties::INDICATE);
         let clone_notify_status_tx = notify_status_tx.clone();
         measurement_chr.lock().on_notify_tx(move |tx| {
             let status = tx.status();
@@ -113,13 +111,11 @@ impl BleManager {
 
         // ── 4. Start advertising ─────────────────────────────────────────
         let advertising = ble_device.get_advertising();
-        advertising
-            .lock()
-            .set_data(
-                BLEAdvertisementData::new()
-                    .name(device_name)
-                    .add_service_uuid(SERVICE_UUID),
-            )?;
+        advertising.lock().set_data(
+            BLEAdvertisementData::new()
+                .name(device_name)
+                .add_service_uuid(SERVICE_UUID),
+        )?;
 
         advertising
             .lock()
@@ -153,14 +149,18 @@ impl BleManager {
     where
         F1: Fn() -> anyhow::Result<()>,
         F2: Fn() -> anyhow::Result<()>,
-        W: Fn(&str, &str) -> anyhow::Result<()> {
-
+        W: Fn(&str, &str) -> anyhow::Result<()>,
+    {
         self.wait_for_connection(Self::get_timeout(saved_config.clone()))?;
         // small delay so the client has time to subscribe to notifications
         std::thread::sleep(std::time::Duration::from_millis(300));
 
         let status = if let Some(config) = saved_config.clone() {
-           DeviceStatus::HasSavedSession { battery_level, session: config.session_uuid, has_measurements}
+            DeviceStatus::HasSavedSession {
+                battery_level,
+                session: config.session_uuid,
+                has_measurements,
+            }
         } else {
             DeviceStatus::Idle(battery_level)
         };
@@ -174,7 +174,9 @@ impl BleManager {
             match cmd {
                 AppCommand::ContinueSession => {
                     if has_measurements {
-                        self.send_response(DeviceResponse::Nack(ErrorCode::StorageHasMeasurements))?;
+                        self.send_response(DeviceResponse::Nack(
+                            ErrorCode::StorageHasMeasurements,
+                        ))?;
                     } else {
                         match saved_config {
                             Some(_) => {
@@ -186,23 +188,27 @@ impl BleManager {
                             }
                         }
                     }
-                },
+                }
 
                 AppCommand::DiscardSession => {
                     self.send_response(DeviceResponse::Ack)?;
                     match clear_storage() {
                         Ok(()) => self.send_response(DeviceResponse::Ready)?,
-                        Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?,
+                        Err(e) => {
+                            self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
+                        }
                     }
-                },
+                }
 
                 AppCommand::StartSync => {
                     self.send_response(DeviceResponse::Ack)?;
                     match sync_storage() {
                         Ok(()) => self.send_response(DeviceResponse::Ready)?,
-                        Err(e) => self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?,
+                        Err(e) => {
+                            self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
+                        }
                     }
-                },
+                }
 
                 AppCommand::NewSessionConfig(config) => {
                     self.send_response(DeviceResponse::Ack)?;
@@ -210,18 +216,21 @@ impl BleManager {
                         pm1_index: _,
                         pm2_5_index: _,
                         wifi_ssid,
-                        wifi_password
-                    } = &config.session_type {
+                        wifi_password,
+                    } = &config.session_type
+                    {
                         match connect_to_wifi(wifi_ssid, wifi_password) {
                             Ok(()) => {
                                 self.send_response(DeviceResponse::Ready)?;
-                                 return Ok(SetupResult::StartNew(config));
-                            },
-                            Err(_) => self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?,
+                                return Ok(SetupResult::StartNew(config));
+                            }
+                            Err(_) => {
+                                self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?
+                            }
                         }
                     } else {
                         self.send_response(DeviceResponse::Ready)?;
-                        return Ok(SetupResult::StartNew(config))
+                        return Ok(SetupResult::StartNew(config));
                     }
                 }
                 AppCommand::GetSensors => {
@@ -240,7 +249,11 @@ impl BleManager {
         }
     }
 
-    pub fn send_measurement(&self, measurement: &Measurement, time: u32) -> Result<(), SendingError> {
+    pub fn send_measurement(
+        &self,
+        measurement: &Measurement,
+        time: u32,
+    ) -> Result<(), SendingError> {
         if !self.is_connected() {
             return Err(SendingError::ConnectionError);
         }
@@ -259,11 +272,14 @@ impl BleManager {
                 NotifyTxStatus::SuccessIndicate => Ok(()),
                 NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
                 NotifyTxStatus::ErrorIndicateTimeout => Err(SendingError::Retry),
-                NotifyTxStatus::ErrorIndicateDisabled |
-                NotifyTxStatus::ErrorGatt => Err(SendingError::ConfigError),
-                _ => Err(SendingError::Retry)
+                NotifyTxStatus::ErrorIndicateDisabled | NotifyTxStatus::ErrorGatt => {
+                    Err(SendingError::ConfigError)
+                }
+                _ => Err(SendingError::Retry),
             }
-        } else { Err(SendingError::Retry) }
+        } else {
+            Err(SendingError::Retry)
+        }
     }
 
     /// Restart advertising after a disconnect
@@ -295,8 +311,11 @@ impl BleManager {
 
     fn get_timeout(session_config: Option<SessionConfig>) -> Option<Duration> {
         if let Some(config) = session_config {
-            if matches!(config.session_type, SessionType::FIXED { .. }) { Some(FIXED_SESSION_TIMEOUT) }
-            else { None }
+            if matches!(config.session_type, SessionType::FIXED { .. }) {
+                Some(FIXED_SESSION_TIMEOUT)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -319,4 +338,3 @@ impl BleManager {
         self._ble_device.get_server().connected_count() > 0
     }
 }
-

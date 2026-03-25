@@ -1,8 +1,8 @@
-use std::time::Duration;
+use crate::storage::session_config::{SessionConfig, SessionType};
 use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvs};
 use esp_idf_svc::sys::EspError;
+use std::time::Duration;
 use uuid::Uuid;
-use crate::storage::session_config::{SessionConfig, SessionType};
 
 const NAMESPACE: &str = "session";
 const KEY_UUID: &str = "uuid";
@@ -37,7 +37,9 @@ impl NvsManager {
 
     pub fn get_uuid(&self) -> Result<Option<Uuid>, EspError> {
         let mut buffer = [0u8; 16];
-        Ok(self.nvs.get_blob(KEY_UUID, &mut buffer)?
+        Ok(self
+            .nvs
+            .get_blob(KEY_UUID, &mut buffer)?
             .and_then(|bytes| Uuid::from_slice(bytes).ok()))
     }
 
@@ -47,7 +49,9 @@ impl NvsManager {
 
     pub fn get_wifi_ssid(&self) -> Result<Option<String>, EspError> {
         let mut buffer = [0u8; 33];
-        Ok(self.nvs.get_str(KEY_WIFI_SSID, &mut buffer)?
+        Ok(self
+            .nvs
+            .get_str(KEY_WIFI_SSID, &mut buffer)?
             .map(|s| s.to_string()))
     }
 
@@ -57,7 +61,9 @@ impl NvsManager {
 
     pub fn get_wifi_password(&self) -> Result<Option<String>, EspError> {
         let mut buffer = [0u8; 65];
-        Ok(self.nvs.get_str(KEY_WIFI_PASS, &mut buffer)?
+        Ok(self
+            .nvs
+            .get_str(KEY_WIFI_PASS, &mut buffer)?
             .map(|p| p.to_string()))
     }
 
@@ -74,12 +80,15 @@ impl NvsManager {
     }
 
     pub fn get_measurement_interval(&self) -> Result<Option<Duration>, EspError> {
-        Ok(self.nvs.get_u32(KEY_MEASUREMENT_INTERVAL)?
+        Ok(self
+            .nvs
+            .get_u32(KEY_MEASUREMENT_INTERVAL)?
             .map(|val| Duration::from_secs(val as u64)))
     }
 
     pub fn set_measurement_interval(&mut self, interval: Duration) -> Result<(), EspError> {
-        self.nvs.set_u32(KEY_MEASUREMENT_INTERVAL, interval.as_secs() as u32)
+        self.nvs
+            .set_u32(KEY_MEASUREMENT_INTERVAL, interval.as_secs() as u32)
     }
 
     pub fn get_pm1_index(&self) -> Result<Option<u8>, EspError> {
@@ -118,11 +127,15 @@ impl NvsManager {
         let Some(session_type) = (if is_mobile {
             Some(SessionType::MOBILE)
         } else {
-            self.get_pm1_index()?.zip(self.get_pm2_5_index()?)
+            self.get_pm1_index()?
+                .zip(self.get_pm2_5_index()?)
                 .zip(self.get_wifi_ssid()?)
                 .zip(self.get_wifi_password()?)
                 .map(|(((p1, p2), ssid), pass)| SessionType::FIXED {
-                    pm1_index: p1, pm2_5_index: p2, wifi_ssid: ssid, wifi_password: pass
+                    pm1_index: p1,
+                    pm2_5_index: p2,
+                    wifi_ssid: ssid,
+                    wifi_password: pass,
                 })
         }) else {
             return Ok(None);
@@ -136,8 +149,13 @@ impl NvsManager {
         match &config.session_type {
             SessionType::MOBILE => {
                 self.set_is_mobile(true)?;
-            },
-            SessionType::FIXED { pm1_index, pm2_5_index, wifi_ssid, wifi_password } => {
+            }
+            SessionType::FIXED {
+                pm1_index,
+                pm2_5_index,
+                wifi_ssid,
+                wifi_password,
+            } => {
                 self.set_is_mobile(false)?;
                 self.set_pm1_index(*pm1_index)?;
                 self.set_pm2_5_index(*pm2_5_index)?;

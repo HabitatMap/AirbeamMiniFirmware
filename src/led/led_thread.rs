@@ -1,9 +1,9 @@
+use crate::led::led_control::RgbLed;
+use esp_idf_svc::hal::ledc::config::TimerConfig;
+use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
-use esp_idf_svc::hal::ledc::config::TimerConfig;
-use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution};
-use crate::led::led_control::RgbLed;
 
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::ledc::{LedcChannel, LedcTimer, LowSpeed};
@@ -17,9 +17,21 @@ pub struct Color {
 }
 impl Color {
     //255 - off; 0 - max brightness
-    pub const RED: Color = Color { r: 0, g: 255, b: 255 };
-    pub const GREEN: Color = Color { r: 255, g: 0, b: 255 };
-    pub const BLUE: Color = Color { r: 255, g: 255, b: 0 };
+    pub const RED: Color = Color {
+        r: 0,
+        g: 255,
+        b: 255,
+    };
+    pub const GREEN: Color = Color {
+        r: 255,
+        g: 0,
+        b: 255,
+    };
+    pub const BLUE: Color = Color {
+        r: 255,
+        g: 255,
+        b: 0,
+    };
     pub const WHITE: Color = Color { r: 0, g: 0, b: 0 };
 }
 
@@ -62,13 +74,19 @@ where
 
     // --- Hardware Initialization (Main Thread) ---
     // Perform initialization here so we can fail fast if hardware is missing/busy
-    let config = TimerConfig::new().frequency(5000.into()).resolution(Resolution::Bits8);
+    let config = TimerConfig::new()
+        .frequency(5000.into())
+        .resolution(Resolution::Bits8);
     let timer = LedcTimerDriver::new(pins.timer, &config)?;
 
     let mut led = RgbLed::new(
         &timer,
-        pins.pin_r, pins.pin_g, pins.pin_b,
-        pins.channel_r, pins.channel_g, pins.channel_b,
+        pins.pin_r,
+        pins.pin_g,
+        pins.pin_b,
+        pins.channel_r,
+        pins.channel_g,
+        pins.channel_b,
     )?;
 
     thread::spawn(move || {
@@ -88,7 +106,7 @@ where
                         Ok(cmd) => {
                             current_mode = cmd;
                             blink_is_on = true; // Reset phase for new command
-                        },
+                        }
                         Err(_) => {
                             log::info!("LED Control Channel closed, exiting thread");
                             break;
@@ -105,7 +123,7 @@ where
                         Ok(cmd) => {
                             current_mode = cmd;
                             blink_is_on = true;
-                        },
+                        }
                         Err(_) => {
                             log::info!("LED Control Channel closed, exiting thread");
                             break;
@@ -131,10 +149,10 @@ where
                         Ok(cmd) => {
                             current_mode = cmd;
                             blink_is_on = true; // Reset phase
-                        },
+                        }
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             blink_is_on = !blink_is_on;
-                        },
+                        }
                         Err(mpsc::RecvTimeoutError::Disconnected) => {
                             log::info!("LED Control Channel closed, exiting thread");
                             break;

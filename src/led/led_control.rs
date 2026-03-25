@@ -9,13 +9,13 @@ pub struct RgbLed<'a> {
 
 impl<'a> RgbLed<'a> {
     pub fn new(
-        timer: &LedcTimerDriver<'a, impl LedcTimer<SpeedMode=LowSpeed>>,
-        red_pin: impl Peripheral<P=impl OutputPin> + 'a,
-        green_pin: impl Peripheral<P=impl OutputPin> + 'a,
-        blue_pin: impl Peripheral<P=impl OutputPin> + 'a,
-        c_red: impl Peripheral<P=impl LedcChannel<SpeedMode=LowSpeed>> + 'a,
-        c_green: impl Peripheral<P=impl LedcChannel<SpeedMode=LowSpeed>> + 'a,
-        c_blue: impl Peripheral<P=impl LedcChannel<SpeedMode=LowSpeed>> + 'a,
+        timer: &LedcTimerDriver<'a, impl LedcTimer<SpeedMode = LowSpeed>>,
+        red_pin: impl Peripheral<P = impl OutputPin> + 'a,
+        green_pin: impl Peripheral<P = impl OutputPin> + 'a,
+        blue_pin: impl Peripheral<P = impl OutputPin> + 'a,
+        c_red: impl Peripheral<P = impl LedcChannel<SpeedMode = LowSpeed>> + 'a,
+        c_green: impl Peripheral<P = impl LedcChannel<SpeedMode = LowSpeed>> + 'a,
+        c_blue: impl Peripheral<P = impl LedcChannel<SpeedMode = LowSpeed>> + 'a,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             red: LedcDriver::new(c_red, timer, red_pin)?,
