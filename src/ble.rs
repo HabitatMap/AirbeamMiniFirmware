@@ -17,6 +17,7 @@ use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{info, warn};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime};
+use uuid::Uuid;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
@@ -137,16 +138,17 @@ impl BleManager {
     }
 
     /// Run the setup handshake. Blocks the calling thread until a config is obtained.
-    pub fn run_setup<F1, F2, W>(
+    pub fn run_setup<F0, F1, F2, W>(
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
-        battery_level: u8,
+        mut battery_level: F0,
         clear_storage: F1,
         sync_storage: F2,
         connect_to_wifi: W,
     ) -> anyhow::Result<SetupResult>
     where
+        F0: FnMut() -> i8,
         F1: Fn() -> anyhow::Result<()>,
         F2: Fn() -> anyhow::Result<()>,
         W: Fn(&str, &str) -> anyhow::Result<()>,
@@ -157,12 +159,12 @@ impl BleManager {
 
         let status = if let Some(config) = saved_config.clone() {
             DeviceStatus::HasSavedSession {
-                battery_level,
+                battery_level: battery_level(),
                 session: config.session_uuid,
                 has_measurements,
             }
         } else {
-            DeviceStatus::Idle(battery_level)
+            DeviceStatus::Idle(battery_level())
         };
 
         self.notify_status(&status)?;
@@ -253,6 +255,8 @@ impl BleManager {
         &self,
         measurement: &Measurement,
         time: u32,
+        battery_level: i8,
+        session: Uuid,
     ) -> Result<(), SendingError> {
         if !self.is_connected() {
             return Err(SendingError::ConnectionError);
@@ -269,7 +273,16 @@ impl BleManager {
         self.measurement_chr.lock().set_value(&buf).notify();
         if let Ok(status) = self.notify_status.recv_timeout(Duration::from_secs(1)) {
             match status {
-                NotifyTxStatus::SuccessIndicate => Ok(()),
+                NotifyTxStatus::SuccessIndicate => {
+                    let mut status = [0u8; 18];
+                    DeviceStatus::Running {
+                        battery_level,
+                        session,
+                    }
+                    .encode(&mut status);
+                    self.status_chr.lock().set_value(&status).notify();
+                    Ok(())
+                }
                 NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
                 NotifyTxStatus::ErrorIndicateTimeout => Err(SendingError::Retry),
                 NotifyTxStatus::ErrorIndicateDisabled | NotifyTxStatus::ErrorGatt => {

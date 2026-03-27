@@ -1,8 +1,10 @@
+mod battery;
 mod ble;
 mod led;
 mod sensor;
 mod storage;
 
+use crate::battery::{BatteryMonitor, BatteryState};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::{Measurement, SensorDriver};
@@ -11,6 +13,9 @@ use crate::storage::session_config::SessionType;
 use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::fs::littlefs::Littlefs;
+use esp_idf_svc::hal::adc::attenuation::DB_11;
+use esp_idf_svc::hal::adc::oneshot::config::{AdcChannelConfig, Calibration};
+use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
@@ -48,8 +53,21 @@ fn main() -> anyhow::Result<()> {
         pin_g: peripherals.pins.gpio1,
         pin_b: peripherals.pins.gpio0,
     };
+
     let tx_pin = peripherals.pins.gpio7; // TX on ESP32-C3 (Connects to RX on Sensor)
     let rx_pin = peripherals.pins.gpio6; // RX on ESP32-C3 (Connects to TX on Sensor)
+
+    // ADC driver + channel live here in main (can't be in the same struct)
+    let adc = AdcDriver::new(peripherals.adc1)?;
+    let config = AdcChannelConfig {
+        attenuation: DB_11,
+        calibration: Calibration::None,
+        ..Default::default()
+    };
+    let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &config)?;
+
+    // Battery monitor owns the USB sense pin
+    let batt = BatteryMonitor::new(peripherals.pins.gpio4)?;
 
     let config = UartConfig::new()
         .baudrate(Hertz(9600))
@@ -81,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     let result = ble.run_setup(
         config,
         storage.has_measurements(),
-        102_u8, //TODO: get battery level
+        || batt.read(&adc, &mut vbat_pin).signed_percent,
         || storage.clear_measurements(),
         || {
             info!("TODO: sync storage");
@@ -103,9 +121,14 @@ fn main() -> anyhow::Result<()> {
         nvs_manager.get_session_config()?.unwrap()
     };
 
-    let send_measurement = |m: Measurement, t: u32| -> Result<(), SendingError> {
+    let mut send_measurement = |m: Measurement, t: u32| -> Result<(), SendingError> {
         match &config.session_type {
-            SessionType::MOBILE => ble.send_measurement(&m, t),
+            SessionType::MOBILE => ble.send_measurement(
+                &m,
+                t,
+                batt.read(&adc, &mut vbat_pin).signed_percent,
+                config.session_uuid,
+            ),
             SessionType::FIXED {
                 pm1_index,
                 pm2_5_index,
