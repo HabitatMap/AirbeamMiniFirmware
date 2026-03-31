@@ -1,9 +1,11 @@
+mod autosync;
 mod battery;
 mod ble;
 mod led;
 mod sensor;
 mod storage;
 
+use crate::autosync::sync_from_storage;
 use crate::battery::{BatteryMonitor, BatteryState};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
@@ -22,7 +24,7 @@ use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use log::{error, info};
+use log::{error, info, warn};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -112,7 +114,6 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     let connected = || true;
-    let sync_stopped = || false;
 
     let config = if let SetupResult::StartNew(config) = result {
         nvs_manager.set_session_config(&config)?;
@@ -158,17 +159,24 @@ fn main() -> anyhow::Result<()> {
                 SendingError::ConnectionError => storage.save_measurement(
                     MeasurementRecord::from_measurement(&measurement, measurement_time),
                 )?, //TODO: on error hold until connection
+                _ => { info!("Failed to send measurement: {:?}", e); }
             }
         }
 
-        if sync_stopped() && storage.has_measurements() && connected() {
-            //TODO: start sync thread
+        if storage.has_measurements() && connected() {
+            if let Err(e) =  sync_from_storage(&config, &storage, |measurements| {
+                ble.send_measurements(measurements)
+            }) {
+                warn!("Failed to sync measurements: {:?}", e);
+            }
         }
     }
 }
 
+#[derive(Debug)]
 enum SendingError {
     ConfigError,
     ConnectionError,
     Retry,
+    Overflow
 }

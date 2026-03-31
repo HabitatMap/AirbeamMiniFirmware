@@ -185,7 +185,7 @@ impl StorageManager {
 
         if bytes_to_remove >= current_size {
             drop(inner);
-            self.clear_measurements();
+            self.clear_measurements()?;
             return Ok(());
         }
 

@@ -268,21 +268,42 @@ impl BleManager {
         buf[5..7].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
         buf[7..9].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
 
-        while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
+        match self.indicate_measurement_chr(&buf) {
+            Ok(()) => {
+                let mut status = [0u8; 18];
+                DeviceStatus::Running {
+                    battery_level,
+                    session,
+                }
+                .encode(&mut status);
+                self.status_chr.lock().set_value(&status).notify();
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
 
-        self.measurement_chr.lock().set_value(&buf).notify();
+    pub fn send_measurements(&self, measurements: &Vec<MeasurementRecord>) -> Result<(), SendingError> {
+        let mut buf = [0u8; 244];
+        let count = measurements.len() as u8;
+        buf[0] = count;
+        for (i, measurement) in measurements.iter().enumerate() {
+            let offset = 3 + i;
+            if offset + 8  > buf.len() { return Err(SendingError::Overflow) }
+            buf[offset..offset+4].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
+            buf[offset + 4..offset+6].copy_from_slice(measurement.pm1.to_le_bytes().as_slice());
+            buf[offset + 6..offset+8].copy_from_slice(measurement.pm2_5.to_le_bytes().as_slice());
+        }
+        self.indicate_measurement_chr(&buf)
+    }
+
+    fn indicate_measurement_chr(&self, buf: &[u8]) -> Result<(), SendingError> {
+        while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
+        self.measurement_chr.lock().set_value(buf).notify();
+
         if let Ok(status) = self.notify_status.recv_timeout(Duration::from_secs(1)) {
             match status {
-                NotifyTxStatus::SuccessIndicate => {
-                    let mut status = [0u8; 18];
-                    DeviceStatus::Running {
-                        battery_level,
-                        session,
-                    }
-                    .encode(&mut status);
-                    self.status_chr.lock().set_value(&status).notify();
-                    Ok(())
-                }
+                NotifyTxStatus::SuccessIndicate => Ok(()),
                 NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
                 NotifyTxStatus::ErrorIndicateTimeout => Err(SendingError::Retry),
                 NotifyTxStatus::ErrorIndicateDisabled | NotifyTxStatus::ErrorGatt => {
