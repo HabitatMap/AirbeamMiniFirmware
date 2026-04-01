@@ -15,8 +15,8 @@ use esp32_nimble::{
 };
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{info, warn};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc};
+use std::time::{Duration};
 use uuid::Uuid;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
@@ -24,6 +24,7 @@ const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60
 const COMMAND_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0003-4b3c-8e9a-1f2d3c4b5a60");
 const RESPONSE_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0004-4b3c-8e9a-1f2d3c4b5a60");
 const MEASUREMENT_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0005-4b3c-8e9a-1f2d3c4b5a60");
+const SYNC_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0006-4b3c-8e9a-1f2d3c4b5a60");
 const FIXED_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug)]
 pub enum SetupResult {
@@ -36,6 +37,7 @@ pub struct BleManager {
     status_chr: Arc<NimbleMutex<BLECharacteristic>>,
     response_chr: Arc<NimbleMutex<BLECharacteristic>>,
     measurement_chr: Arc<NimbleMutex<BLECharacteristic>>,
+    sync_chr: Arc<NimbleMutex<BLECharacteristic>>,
     //channels for BLE data
     notify_status: std::sync::mpsc::Receiver<NotifyTxStatus>,
     cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
@@ -104,6 +106,15 @@ impl BleManager {
             let _ = clone_notify_status_tx.send(status);
         });
 
+        let sync_chr = service
+            .lock()
+            .create_characteristic(SYNC_CHAR_UUID, NimbleProperties::INDICATE);
+        let clone_notify_status_tx = notify_status_tx.clone();
+        sync_chr.lock().on_notify_tx(move |tx| {
+            let status = tx.status();
+            let _ = clone_notify_status_tx.send(status);
+        });
+
         // Response: notify-only (device → app for ack/nack/sync chunks)
         let response_chr = service.lock().create_characteristic(
             RESPONSE_CHAR_UUID,
@@ -130,6 +141,7 @@ impl BleManager {
             status_chr,
             response_chr,
             measurement_chr,
+            sync_chr,
             notify_status: notify_status_rx,
             cmd_rx,
             cmd_tx,
@@ -268,7 +280,7 @@ impl BleManager {
         buf[5..7].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
         buf[7..9].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
 
-        match self.indicate_measurement_chr(&buf) {
+        match self.indicate_measurement_chr(&buf, false) {
             Ok(()) => {
                 let mut status = [0u8; 18];
                 DeviceStatus::Running {
@@ -283,23 +295,33 @@ impl BleManager {
         }
     }
 
-    pub fn send_measurements(&self, measurements: &Vec<MeasurementRecord>) -> Result<(), SendingError> {
+    pub fn send_measurements(
+        &self,
+        measurements: &[MeasurementRecord],
+    ) -> Result<(), SendingError> {
         let mut buf = [0u8; 244];
         let count = measurements.len() as u8;
         buf[0] = count;
         for (i, measurement) in measurements.iter().enumerate() {
             let offset = 3 + i;
-            if offset + 8  > buf.len() { return Err(SendingError::Overflow) }
-            buf[offset..offset+4].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
-            buf[offset + 4..offset+6].copy_from_slice(measurement.pm1.to_le_bytes().as_slice());
-            buf[offset + 6..offset+8].copy_from_slice(measurement.pm2_5.to_le_bytes().as_slice());
+            if offset + 8 > buf.len() {
+                return Err(SendingError::Overflow);
+            }
+            buf[offset..offset + 4].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
+            buf[offset + 4..offset + 6].copy_from_slice(measurement.pm1.to_le_bytes().as_slice());
+            buf[offset + 6..offset + 8].copy_from_slice(measurement.pm2_5.to_le_bytes().as_slice());
         }
-        self.indicate_measurement_chr(&buf)
+        self.indicate_measurement_chr(&buf, true)
     }
 
-    fn indicate_measurement_chr(&self, buf: &[u8]) -> Result<(), SendingError> {
+    fn indicate_measurement_chr(&self, buf: &[u8], is_sync: bool) -> Result<(), SendingError> {
         while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
-        self.measurement_chr.lock().set_value(buf).notify();
+
+        if (is_sync) {
+            self.sync_chr.lock().set_value(buf).notify();
+        } else {
+            self.measurement_chr.lock().set_value(buf).notify();
+        }
 
         if let Ok(status) = self.notify_status.recv_timeout(Duration::from_secs(1)) {
             match status {
@@ -368,7 +390,7 @@ impl BleManager {
         self.response_chr.lock().set_value(&buf[..len]).notify();
         Ok(())
     }
-    fn is_connected(&self) -> bool {
+    pub fn is_connected(&self) -> bool {
         self._ble_device.get_server().connected_count() > 0
     }
 }

@@ -14,7 +14,7 @@ const BUFFER_CAPACITY: usize = 10;
 //Record size is 2 start bytes + 1 byte number of measurements in a record + 8 bytes (timestamp + raw data) for each record + 1 byte checksum
 const MAX_RECORD_SIZE: usize = BUFFER_CAPACITY * 8 + 4;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct MeasurementRecord {
     pub timestamp: u32,
     pub pm1: u16,
@@ -36,6 +36,18 @@ impl MeasurementRecord {
             pm1: m.pm1_0_avg,
             pm2_5: m.pm2_5_avg,
         }
+    }
+}
+
+impl Ord for MeasurementRecord {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.timestamp.cmp(&other.timestamp)
+    }
+}
+
+impl PartialOrd for MeasurementRecord {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 

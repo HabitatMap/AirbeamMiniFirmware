@@ -1,3 +1,4 @@
+mod aggregator;
 mod autosync;
 mod battery;
 mod ble;
@@ -5,6 +6,7 @@ mod led;
 mod sensor;
 mod storage;
 
+use crate::aggregator::MeasurementAggregator;
 use crate::autosync::sync_from_storage;
 use crate::battery::{BatteryMonitor, BatteryState};
 use crate::ble::SetupResult;
@@ -113,8 +115,6 @@ fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    let connected = || true;
-
     let config = if let SetupResult::StartNew(config) = result {
         nvs_manager.set_session_config(&config)?;
         config
@@ -139,8 +139,13 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    let (measurement_rx, stop_tx) = sensor.start_sensor_task(config.interval);
 
+    let connected = || {
+        ble.is_connected()
+    };
+
+    let (measurement_rx, stop_tx) = sensor.start_sensor_task(config.interval);
+    let mut aggregator = MeasurementAggregator::new(config.interval);
     loop {
         let measurement = measurement_rx.recv()?;
         let measurement_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as u32;
@@ -149,22 +154,25 @@ fn main() -> anyhow::Result<()> {
             match e {
                 SendingError::Retry => {
                     if let Err(e) = send_measurement(measurement, measurement_time) {
-                        storage.save_measurement(MeasurementRecord::from_measurement(
-                            &measurement,
-                            measurement_time,
-                        ))?;
+                        if let Some(measurement) = aggregator.average_measurement(
+                            MeasurementRecord::from_measurement(&measurement, measurement_time),
+                        ) {
+                            storage.save_measurement(measurement)?;
+                        }
                     }
                 }
                 SendingError::ConfigError => {} //TODO: break the session loop
                 SendingError::ConnectionError => storage.save_measurement(
                     MeasurementRecord::from_measurement(&measurement, measurement_time),
                 )?, //TODO: on error hold until connection
-                _ => { info!("Failed to send measurement: {:?}", e); }
+                _ => {
+                    info!("Failed to send measurement: {:?}", e);
+                }
             }
         }
 
         if storage.has_measurements() && connected() {
-            if let Err(e) =  sync_from_storage(&config, &storage, |measurements| {
+            if let Err(e) = sync_from_storage(&config, &storage, |measurements| {
                 ble.send_measurements(measurements)
             }) {
                 warn!("Failed to sync measurements: {:?}", e);
@@ -173,10 +181,11 @@ fn main() -> anyhow::Result<()> {
     }
 }
 
+
 #[derive(Debug)]
 enum SendingError {
     ConfigError,
     ConnectionError,
     Retry,
-    Overflow
+    Overflow,
 }

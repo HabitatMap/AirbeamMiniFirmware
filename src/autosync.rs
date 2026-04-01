@@ -1,6 +1,6 @@
-use crate::SendingError;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::{MeasurementRecord, StorageManager};
+use crate::SendingError;
 
 pub fn sync_from_storage<F>(
     config: &SessionConfig,
@@ -16,13 +16,13 @@ where
         let free = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() } as usize;
         let per_record = std::mem::size_of::<MeasurementRecord>() + 4;
         let batch = (free / 2) / per_record; //we load at max half of the free RAM
-        if batch < 10 {return Err(SyncError::NoHeapSpace)}
+        if batch < 10 {
+            return Err(SyncError::NoHeapSpace);
+        }
         batch.clamp(10, 500)
     };
 
-    let iter = storage
-        .iter_measurements()
-        .ok_or(SyncError::GetStorage)?;
+    let iter = storage.iter_measurements().ok_or(SyncError::GetStorage)?;
 
     let mut measurements: Vec<MeasurementRecord> = Vec::with_capacity(batch_size);
     let mut bytes_to_remove = 0;
@@ -42,8 +42,8 @@ where
             } else {
                 Err(SyncError::RemoveStorage)
             }
-        },
-        Err(e) => { Err(SyncError::Send(e)) }
+        }
+        Err(e) => Err(SyncError::Send(e)),
     }
 }
 #[derive(Debug)]
