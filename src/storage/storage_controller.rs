@@ -30,9 +30,9 @@ impl MeasurementRecord {
         }
     }
 
-    pub fn from_measurement(m: &Measurement, timestamp: u32) -> Self {
+    pub fn from_measurement(m: &Measurement) -> Self {
         Self {
-            timestamp,
+            timestamp: m.timestamp,
             pm1: m.pm1_0_avg,
             pm2_5: m.pm2_5_avg,
         }

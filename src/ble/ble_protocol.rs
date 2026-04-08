@@ -1,13 +1,15 @@
 use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::LoopEvent;
 use uuid::Uuid;
+
 pub const SENSOR_INFO: &str = "PM1,μg/m3;PM2.5,μg/m3";
 /// Commands the app writes to the device
 /// All data in LowEndian
 #[derive(Debug, Clone)]
 pub enum AppCommand {
     ContinueSession,                 // 0x10
-    DiscardSession,                  // 0x11
-    StartSync,                       // 0x12
+    DiscardSession,                  // 0x11 (end session without syncing)
+    StartSync,                       // 0x12 (end session when running)
     NewSessionConfig(SessionConfig), // 0x13 + 16B - uuid + u16 interval + u8 session_type (optional: + u8 pm1 index + u8 pm2 index + 32B wifi_ssid + 64B wifi_pass)
     GetSensors,                      // 0x14
     SetTime(i64),                    // 0x15 + i64
@@ -67,6 +69,14 @@ impl AppCommand {
                 let epoch = i64::from_le_bytes(data[1..9].try_into().ok()?);
                 Some(Self::SetTime(epoch))
             }
+            _ => None,
+        }
+    }
+    pub fn as_loop_event(&self) -> Option<LoopEvent> {
+        match self {
+            AppCommand::SetTime(time) => Some(LoopEvent::TimeUpdate(*time)),
+            AppCommand::DiscardSession => Some(LoopEvent::Stop { start_sync: false }),
+            AppCommand::StartSync => Some(LoopEvent::Stop { start_sync: true }),
             _ => None,
         }
     }

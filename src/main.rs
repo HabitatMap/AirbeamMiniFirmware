@@ -26,7 +26,9 @@ use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{error, info, warn};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -87,12 +89,12 @@ fn main() -> anyhow::Result<()> {
         &config,
     )?;
 
+    let (event_tx, event_rx) = mpsc::channel();
     let sensor = SensorDriver::new(uart);
-    sensor.sleep(); //no need for sensor to be running during setup process
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs)?;
-    let mut ble = ble::BleManager::new("AirBeamMini2")?;
+    let mut ble = ble::BleManager::new("AirBeamMini2", event_tx.clone())?;
 
     let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
         nvs_manager.clear_all();
@@ -122,11 +124,10 @@ fn main() -> anyhow::Result<()> {
         nvs_manager.get_session_config()?.unwrap()
     };
 
-    let mut send_measurement = |m: Measurement, t: u32| -> Result<(), SendingError> {
+    let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
         match &config.session_type {
             SessionType::MOBILE => ble.send_measurement(
                 &m,
-                t,
                 batt.read(&adc, &mut vbat_pin).signed_percent,
                 config.session_uuid,
             ),
@@ -139,48 +140,72 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-
-    let connected = || {
-        ble.is_connected()
-    };
-
-    let (measurement_rx, stop_tx) = sensor.start_sensor_task(config.interval);
+    let connected = || ble.is_connected();
+    let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());
     let mut aggregator = MeasurementAggregator::new(config.interval);
     loop {
-        let measurement = measurement_rx.recv()?;
-        let measurement_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as u32;
-
-        if let Err(e) = send_measurement(measurement, measurement_time) {
-            match e {
-                SendingError::Retry => {
-                    if let Err(e) = send_measurement(measurement, measurement_time) {
-                        if let Some(measurement) = aggregator.average_measurement(
-                            MeasurementRecord::from_measurement(&measurement, measurement_time),
-                        ) {
-                            storage.save_measurement(measurement)?;
+        let event = event_rx.recv_timeout(Duration::from_millis(100));
+        if let Ok(event) = event {
+            match event {
+                LoopEvent::Measurement(m) => {
+                    if let Err(e) = send_measurement(m) {
+                        match e {
+                            SendingError::Retry => {
+                                if let Err(e) = send_measurement(m) {
+                                    if let Some(measurement) = aggregator.average_measurement(
+                                        MeasurementRecord::from_measurement(&m),
+                                    ) {
+                                        storage.save_measurement(measurement)?;
+                                    }
+                                }
+                            }
+                            SendingError::ConfigError => {}
+                            _ => {
+                                let _ = storage
+                                    .save_measurement(MeasurementRecord::from_measurement(&m));
+                            }
                         }
                     }
                 }
-                SendingError::ConfigError => {} //TODO: break the session loop
-                SendingError::ConnectionError => storage.save_measurement(
-                    MeasurementRecord::from_measurement(&measurement, measurement_time),
-                )?, //TODO: on error hold until connection
-                _ => {
-                    info!("Failed to send measurement: {:?}", e);
+
+                LoopEvent::TimeUpdate(time_epoch) => {
+                    let tv = timeval {
+                        tv_sec: time_epoch,
+                        tv_usec: 0,
+                    };
+                    unsafe { settimeofday(&tv, std::ptr::null()) };
+                    info!("BLE: Set time to {}", time_epoch);
+                }
+
+                LoopEvent::Stop { start_sync } => {
+                    let _ = stop_tx.send(());
+                    if start_sync {
+                        //TODO: wifi sync
+                    }
+                    let _ = storage.clear_measurements();
+                    nvs_manager.clear_all();
+                    break;
                 }
             }
         }
 
         if storage.has_measurements() && connected() {
             if let Err(e) = sync_from_storage(&config, &storage, |measurements| {
-                ble.send_measurements(measurements)
+                ble.send_measurements(measurements) //TODO wifi
             }) {
                 warn!("Failed to sync measurements: {:?}", e);
             }
         }
     }
+    Ok(())
 }
 
+#[derive(Debug)]
+pub enum LoopEvent {
+    TimeUpdate(i64),
+    Measurement(Measurement),
+    Stop { start_sync: bool },
+}
 
 #[derive(Debug)]
 enum SendingError {

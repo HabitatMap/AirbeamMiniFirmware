@@ -4,7 +4,7 @@ use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCo
 use crate::sensor::sensor_thread::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::MeasurementRecord;
-use crate::SendingError;
+use crate::{LoopEvent, SendingError};
 use esp32_nimble::enums::AuthReq;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
@@ -15,8 +15,9 @@ use esp32_nimble::{
 };
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{info, warn};
-use std::sync::{Arc};
-use std::time::{Duration};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
@@ -47,7 +48,7 @@ pub struct BleManager {
 }
 
 impl BleManager {
-    pub fn new(device_name: &str) -> anyhow::Result<Self> {
+    pub fn new(device_name: &str, event_tx: Sender<LoopEvent>) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let (notify_status_tx, notify_status_rx) = std::sync::mpsc::channel();
         // ── 1. Get the NimBLE singleton ──────────────────────────────────
@@ -65,7 +66,6 @@ impl BleManager {
 
         server.on_disconnect(move |_desc, reason| {
             info!("BLE client disconnected");
-            //TODO reconnect attempt if mobile session in progress
         });
 
         // ── 3. Create service + characteristics ──────────────────────────
@@ -87,8 +87,11 @@ impl BleManager {
             match AppCommand::decode(data) {
                 Some(cmd) => {
                     info!("BLE command received: {:?}", cmd);
-                    if let Err(e) = cmd_tx_clone.send(cmd) {
+                    if let Err(e) = cmd_tx_clone.send(cmd.clone()) {
                         warn!("BLE command send failed: {:?}", e);
+                    }
+                    if let Some(event) = cmd.as_loop_event() {
+                        let _ = event_tx.send(event);
                     }
                 }
                 None => {
@@ -266,7 +269,6 @@ impl BleManager {
     pub fn send_measurement(
         &self,
         measurement: &Measurement,
-        time: u32,
         battery_level: i8,
         session: Uuid,
     ) -> Result<(), SendingError> {
@@ -276,7 +278,7 @@ impl BleManager {
 
         let mut buf = [0u8; 9];
         buf[0] = 1_u8;
-        buf[1..5].copy_from_slice(time.to_le_bytes().as_slice());
+        buf[1..5].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
         buf[5..7].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
         buf[7..9].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
 
