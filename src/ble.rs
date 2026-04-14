@@ -232,13 +232,13 @@ impl BleManager {
                     if let SessionType::FIXED {
                         pm1_index: _,
                         pm2_5_index: _,
+                        token,
                         wifi_ssid,
                         wifi_password,
                     } = &config.session_type
                     {
                         match connect_to_wifi(wifi_ssid, wifi_password) {
                             Ok(()) => {
-                                self.send_response(DeviceResponse::Ready)?;
                                 return Ok(SetupResult::StartNew(config));
                             }
                             Err(_) => {
