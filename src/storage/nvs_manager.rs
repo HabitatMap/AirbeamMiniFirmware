@@ -12,6 +12,7 @@ const KEY_IS_MOBILE: &str = "is_mobile";
 const KEY_MEASUREMENT_INTERVAL: &str = "interval";
 const KEY_PM1_INDEX: &str = "pm1_index";
 const KEY_PM2_5_INDEX: &str = "pm2_5_index";
+const KEY_TOKEN: &str = "token";
 
 /// Manages persistent session data stored in the ESP32's NVS flash.
 pub struct NvsManager {
@@ -107,6 +108,14 @@ impl NvsManager {
         self.nvs.set_u8(KEY_PM2_5_INDEX, pm_index)
     }
 
+    pub fn get_token(&self) -> Result<Option<u16>, EspError> {
+        self.nvs.get_u16(KEY_TOKEN)
+    }
+
+    pub fn set_token(&mut self, token: u16) -> Result<(), EspError> {
+        self.nvs.set_u16(KEY_TOKEN, token)
+    }
+
     pub fn get_session_config(&self) -> Result<Option<SessionConfig>, EspError> {
         let uuid = match self.get_uuid()? {
             Some(u) => u,
@@ -128,12 +137,14 @@ impl NvsManager {
             Some(SessionType::MOBILE)
         } else {
             self.get_pm1_index()?
+                .zip(self.get_token()?)
                 .zip(self.get_pm2_5_index()?)
                 .zip(self.get_wifi_ssid()?)
                 .zip(self.get_wifi_password()?)
-                .map(|(((p1, p2), ssid), pass)| SessionType::FIXED {
+                .map(|((((p1, token), p2), ssid), pass)| SessionType::FIXED {
                     pm1_index: p1,
                     pm2_5_index: p2,
+                    token,
                     wifi_ssid: ssid,
                     wifi_password: pass,
                 })
@@ -153,12 +164,14 @@ impl NvsManager {
             SessionType::FIXED {
                 pm1_index,
                 pm2_5_index,
+                token,
                 wifi_ssid,
                 wifi_password,
             } => {
                 self.set_is_mobile(false)?;
                 self.set_pm1_index(*pm1_index)?;
                 self.set_pm2_5_index(*pm2_5_index)?;
+                self.set_token(*token)?;
                 self.set_wifi_ssid(&wifi_ssid)?;
                 self.set_wifi_password(&wifi_password)?;
             }

@@ -5,6 +5,7 @@ mod ble;
 mod led;
 mod sensor;
 mod storage;
+mod wifi;
 
 use crate::aggregator::MeasurementAggregator;
 use crate::autosync::sync_from_storage;
@@ -134,6 +135,7 @@ fn main() -> anyhow::Result<()> {
             SessionType::FIXED {
                 pm1_index,
                 pm2_5_index,
+                token,
                 wifi_ssid,
                 wifi_password,
             } => Ok(()),
