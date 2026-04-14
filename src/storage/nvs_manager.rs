@@ -108,12 +108,19 @@ impl NvsManager {
         self.nvs.set_u8(KEY_PM2_5_INDEX, pm_index)
     }
 
-    pub fn get_token(&self) -> Result<Option<u16>, EspError> {
-        self.nvs.get_u16(KEY_TOKEN)
+    pub fn get_token(&self) -> Result<Option<u128>, EspError> {
+        let mut buffer = [0u8; 16];
+        self.nvs.get_blob(KEY_TOKEN, &mut buffer)?;
+        let token = u128::from_le_bytes(buffer);
+        if token == u128::MAX || token == u128::MIN {
+            Ok(None)
+        } else {
+            Ok(Some(token))
+        }
     }
 
-    pub fn set_token(&mut self, token: u16) -> Result<(), EspError> {
-        self.nvs.set_u16(KEY_TOKEN, token)
+    pub fn set_token(&mut self, token: u128) -> Result<(), EspError> {
+        self.nvs.set_blob(KEY_TOKEN, &token.to_le_bytes())
     }
 
     pub fn get_session_config(&self) -> Result<Option<SessionConfig>, EspError> {

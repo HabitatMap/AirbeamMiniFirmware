@@ -32,6 +32,7 @@ use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use esp_idf_svc::hal::peripheral::Peripheral;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -42,7 +43,17 @@ fn main() -> anyhow::Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
-
+    let mut mac = [0u8; 6];
+    unsafe {
+        esp_idf_svc::sys::esp_read_mac(
+            mac.as_mut_ptr(),
+            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_BT
+        );
+    }
+    let mac_str = format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+    );
     let lfs = unsafe { Littlefs::<()>::new_partition("storage") }?;
     let mounted = MountedLittlefs::mount(lfs, MOUNT_POINT).unwrap_or_else(|e| {
         log::error!("Formatting storage, Failed to mount filesystem: {:?}", e);
@@ -95,7 +106,8 @@ fn main() -> anyhow::Result<()> {
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs)?;
-    let mut ble = ble::BleManager::new("AirBeamMini2", event_tx.clone())?;
+    let name = format!("AirBeamMini:{}", mac_str);
+    let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
 
     let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
         nvs_manager.clear_all();

@@ -14,7 +14,7 @@ pub enum SessionType {
     FIXED {
         pm1_index: u8,
         pm2_5_index: u8,
-        token: u16,
+        token: u128,
         wifi_ssid: String,
         wifi_password: String,
     },
