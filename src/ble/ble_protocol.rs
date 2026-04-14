@@ -22,7 +22,7 @@ impl AppCommand {
             0x11 => Some(Self::DiscardSession),
             0x12 => Some(Self::StartSync),
             0x13 if data.len() >= 19 => {
-                let uuid = Uuid::from_slice(&data[1..17]).ok()?;
+                let uuid = Uuid::from_slice_le(&data[1..17]).ok()?;
                 let interval_seconds = u16::from_le_bytes(data[17..19].try_into().ok()?);
                 let interval = std::time::Duration::from_secs(interval_seconds as u64);
                 let session_type = match data[19] {
@@ -32,9 +32,9 @@ impl AppCommand {
                         }
                         let pm1_index = data[20];
                         let pm2_5_index = data[21];
-                        let token = u16::from_le_bytes(data[22..24].try_into().ok()?);
+                        let token = u128::from_le_bytes(data[22..38].try_into().ok()?);
                         let wifi_ssid = String::from_utf8(
-                            data[24..56]
+                            data[38..70]
                                 .iter()
                                 .take_while(|&&x| x != 0)
                                 .cloned()
@@ -42,7 +42,7 @@ impl AppCommand {
                         )
                         .ok()?;
                         let wifi_password = String::from_utf8(
-                            data[56..120]
+                            data[70..134]
                                 .iter()
                                 .take_while(|&&x| x != 0)
                                 .cloned()
