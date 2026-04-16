@@ -1,13 +1,12 @@
 use crate::led::led_control::RgbLed;
 use esp_idf_svc::hal::ledc::config::TimerConfig;
-use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution};
+use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution, SpeedMode};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::ledc::{LedcChannel, LedcTimer, LowSpeed};
-use esp_idf_svc::hal::peripheral::Peripheral;
 
 #[derive(Clone, Copy)]
 pub struct Color {
@@ -55,20 +54,13 @@ pub fn start_led_thread<T, C0, C1, C2, R, G, B>(
     pins: LedPins<T, C0, C1, C2, R, G, B>,
 ) -> anyhow::Result<mpsc::Sender<LedCommand>>
 where
-    T: Peripheral + 'static,
-    T::P: LedcTimer<SpeedMode = LowSpeed>,
-    C0: Peripheral + 'static,
-    C0::P: LedcChannel<SpeedMode = LowSpeed>,
-    C1: Peripheral + 'static,
-    C1::P: LedcChannel<SpeedMode = LowSpeed>,
-    C2: Peripheral + 'static,
-    C2::P: LedcChannel<SpeedMode = LowSpeed>,
-    R: Peripheral + 'static,
-    R::P: OutputPin,
-    G: Peripheral + 'static,
-    G::P: OutputPin,
-    B: Peripheral + 'static,
-    B::P: OutputPin,
+    T: LedcTimer<SpeedMode = LowSpeed> + 'static,
+    C0: LedcChannel<SpeedMode = LowSpeed> + 'static,
+    C1: LedcChannel<SpeedMode = LowSpeed> + 'static,
+    C2: LedcChannel<SpeedMode = LowSpeed> + 'static,
+    R: OutputPin + 'static,
+    G: OutputPin + 'static,
+    B: OutputPin + 'static,
 {
     let (tx, rx) = mpsc::channel::<LedCommand>();
 

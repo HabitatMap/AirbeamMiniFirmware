@@ -1,4 +1,4 @@
-# AirBeam Mini Firmware
+ru# AirBeam Mini Firmware
 
 Firmware for the AirBeam Mini, built using Rust and `esp-idf-svc`.
 Target MCU: **ESP32-C3** (`riscv32imc-esp-espidf`)
@@ -12,7 +12,7 @@ Before building, ensure you have the necessary tools installed:
     ```bash
     rustup install nightly
     rustup component add rust-src --toolchain nightly
-    rustup target add riscv32imc-unknown-none-elf --toolchain nightly
+    rustup target add riscv32imc-esp-espidf --toolchain nightly
     ```
 
 2.  **Build Tools (`ldproxy`)**

@@ -18,11 +18,10 @@ use crate::storage::session_config::SessionType;
 use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::fs::littlefs::Littlefs;
-use esp_idf_svc::hal::adc::attenuation::DB_11;
+use esp_idf_svc::hal::adc::attenuation::DB_12;
 use esp_idf_svc::hal::adc::oneshot::config::{AdcChannelConfig, Calibration};
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::gpio;
-use esp_idf_svc::hal::prelude::*;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::io::vfs::MountedLittlefs;
@@ -32,7 +31,8 @@ use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use esp_idf_svc::hal::peripheral::Peripheral;
+use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::hal::units::Hertz;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -78,7 +78,7 @@ fn main() -> anyhow::Result<()> {
     // ADC driver + channel live here in main (can't be in the same struct)
     let adc = AdcDriver::new(peripherals.adc1)?;
     let config = AdcChannelConfig {
-        attenuation: DB_11,
+        attenuation: DB_12,
         calibration: Calibration::None,
         ..Default::default()
     };

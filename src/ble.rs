@@ -305,7 +305,7 @@ impl BleManager {
         let count = measurements.len() as u8;
         buf[0] = count;
         for (i, measurement) in measurements.iter().enumerate() {
-            let offset = 3 + i;
+            let offset = 3 + i * 8;
             if offset + 8 > buf.len() {
                 return Err(SendingError::Overflow);
             }
@@ -319,7 +319,7 @@ impl BleManager {
     fn indicate_measurement_chr(&self, buf: &[u8], is_sync: bool) -> Result<(), SendingError> {
         while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
 
-        if (is_sync) {
+        if is_sync {
             self.sync_chr.lock().set_value(buf).notify();
         } else {
             self.measurement_chr.lock().set_value(buf).notify();
