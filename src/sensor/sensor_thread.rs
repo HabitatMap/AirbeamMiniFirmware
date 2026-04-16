@@ -1,4 +1,3 @@
-use crate::led::led_thread::{Color, LedCommand};
 use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use crate::LoopEvent;
 use esp_idf_svc::hal::uart::UartDriver;

@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Seb <strycharz97@gmail.com>"]
 edition = "2021"
 resolver = "2"
-rust-version = "1.85.0"
+rust-version = "1.87.0"
 
 [[bin]]
 name = "airbeam-mini"
@@ -24,8 +24,9 @@ experimental = ["esp-idf-svc/experimental"]
 
 [dependencies]
 log = "0.4"
-esp-idf-svc = { version = "0.51.0", features = ["alloc", "experimental"] }
-esp32-nimble = "0.11.1"
+esp-idf-svc = { version = "0.52.1", features = ["alloc", "experimental"] }
+embedded-svc = { version = "0.29", default-features = false }
+esp32-nimble = "0.12.0"
 anyhow = "1.0.100"
 byteorder = "1.5.0" #for parsing plantower data
 uuid = "1.21.0"
@@ -48,7 +49,7 @@ uuid = "1.21.0"
 # critical-section = { version = "1.1", features = ["std"], default-features = false }
 
 [[package.metadata.esp-idf-sys.extra_components]]
-remote_component = { name = "joltwallet/littlefs", version = "1.14" }
+remote_component = { name = "joltwallet/littlefs", version = "1.20" }
 
 [build-dependencies]
 embuild = "0.33"
