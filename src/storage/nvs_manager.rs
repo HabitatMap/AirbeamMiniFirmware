@@ -13,6 +13,8 @@ const KEY_MEASUREMENT_INTERVAL: &str = "interval";
 const KEY_PM1_INDEX: &str = "pm1_index";
 const KEY_PM2_5_INDEX: &str = "pm2_5_index";
 const KEY_TOKEN: &str = "token";
+const KEY_DOMAIN: &str = "domain";
+const DEFAULT_DOMAIN: &str = "aircasting.org";
 
 /// Manages persistent session data stored in the ESP32's NVS flash.
 pub struct NvsManager {
@@ -26,7 +28,7 @@ impl NvsManager {
         Ok(Self { nvs })
     }
 
-    pub fn clear_all(&mut self) {
+    pub fn clear_session_config(&mut self) {
         let _ = self.nvs.remove(KEY_UUID);
         let _ = self.nvs.remove(KEY_WIFI_SSID);
         let _ = self.nvs.remove(KEY_WIFI_PASS);
@@ -34,6 +36,18 @@ impl NvsManager {
         let _ = self.nvs.remove(KEY_MEASUREMENT_INTERVAL);
         let _ = self.nvs.remove(KEY_PM1_INDEX);
         let _ = self.nvs.remove(KEY_PM2_5_INDEX);
+    }
+
+    pub fn get_domain(&self) -> Result<String, EspError> {
+        let mut buffer = [0u8; 33];
+        let domain = self.nvs
+            .get_str(KEY_DOMAIN, &mut buffer)?
+            .map(|s| s.to_string());
+        Ok(domain.unwrap_or_else(|| DEFAULT_DOMAIN.to_string()))
+    }
+
+    pub fn set_domain(&mut self, domain: &str) -> Result<(), EspError> {
+        self.nvs.set_str(KEY_DOMAIN, domain)
     }
 
     pub fn get_uuid(&self) -> Result<Option<Uuid>, EspError> {
