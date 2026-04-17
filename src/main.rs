@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
     let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
 
     let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
-        nvs_manager.clear_all();
+        nvs_manager.clear_session_config();
         error!("Failed to get session config: {:?}", e);
         None
     });
@@ -197,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                         //TODO: wifi sync
                     }
                     let _ = storage.clear_measurements();
-                    nvs_manager.clear_all();
+                    nvs_manager.clear_session_config();
                     break;
                 }
             }
