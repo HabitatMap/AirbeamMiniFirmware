@@ -14,7 +14,7 @@ where
         30
     } else {
         let free = unsafe { esp_idf_svc::sys::esp_get_free_heap_size() } as usize;
-        let per_record = std::mem::size_of::<MeasurementRecord>() + 4;
+        let per_record = size_of::<MeasurementRecord>() + 4;
         let batch = (free / 2) / per_record; //we load at max half of the free RAM
         if batch < 10 {
             return Err(SyncError::NoHeapSpace);
