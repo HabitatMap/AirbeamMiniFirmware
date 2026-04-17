@@ -14,7 +14,7 @@ use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::sensor_thread::{Measurement, SensorDriver};
 use crate::storage::nvs_manager::NvsManager;
-use crate::storage::session_config::SessionType;
+use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::{MeasurementRecord, StorageManager, MOUNT_POINT};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::fs::littlefs::Littlefs;
@@ -33,6 +33,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::units::Hertz;
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
+use uuid::Uuid;
+use crate::wifi::wifi_manager::WifiManager;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -105,10 +108,14 @@ fn main() -> anyhow::Result<()> {
     let sensor = SensorDriver::new(uart);
     let led_command = start_led_thread(led_pins)?;
     let storage = StorageManager::new();
-    let mut nvs_manager = NvsManager::new(nvs)?;
+    let mut nvs_manager = NvsManager::new(nvs.clone())?;
     let name = format!("AirBeamMini:{}", mac_str);
     let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
 
+    let esp_wifi = EspWifi::new(peripherals.modem.split().0, sys_loop.clone(), Some(nvs))?;
+    let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
+    let wifi_man = WifiManager::new(blocking);
+    
     let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
         nvs_manager.clear_session_config();
         error!("Failed to get session config: {:?}", e);
@@ -125,8 +132,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         },
         |ssid, password| {
-            info!("TODO: connect to wifi '{}' / '{}'", ssid, password);
-            Ok(())
+            wifi_man.connect(ssid, password)
         },
     )?;
 
@@ -136,21 +142,22 @@ fn main() -> anyhow::Result<()> {
     } else {
         nvs_manager.get_session_config()?.unwrap()
     };
+    let domain = nvs_manager.get_domain()?;
 
-    let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
+    let mut send_measurement = |m: Measurement| -> Result<(), ()> {
         match &config.session_type {
-            SessionType::MOBILE => ble.send_measurement(
-                &m,
-                batt.read(&adc, &mut vbat_pin).signed_percent,
-                config.session_uuid,
-            ),
+            SessionType::MOBILE => {
+                ble.send_measurement( &m, batt.read(&adc, &mut vbat_pin).signed_percent, config.session_uuid).map_err(|_| ())
+            },
             SessionType::FIXED {
                 pm1_index,
                 pm2_5_index,
                 token,
                 wifi_ssid,
                 wifi_password,
-            } => Ok(()),
+            } => {
+                wifi_man.send_measurements(&[m], domain.as_str(), config.clone()).map_err(|_| ())
+            },
         }
     };
 
@@ -162,23 +169,8 @@ fn main() -> anyhow::Result<()> {
         if let Ok(event) = event {
             match event {
                 LoopEvent::Measurement(m) => {
-                    if let Err(e) = send_measurement(m) {
-                        match e {
-                            SendingError::Retry => {
-                                if let Err(e) = send_measurement(m) {
-                                    if let Some(measurement) = aggregator.average_measurement(
-                                        MeasurementRecord::from_measurement(&m),
-                                    ) {
-                                        storage.save_measurement(measurement)?;
-                                    }
-                                }
-                            }
-                            SendingError::ConfigError => {}
-                            _ => {
-                                let _ = storage
-                                    .save_measurement(MeasurementRecord::from_measurement(&m));
-                            }
-                        }
+                    if let Err(()) = send_measurement(m) {
+                        let _ = storage.save_measurement(MeasurementRecord::from_measurement(&m));
                     }
                 }
 
