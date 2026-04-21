@@ -8,6 +8,7 @@ use embedded_svc::http::Method;
 use embedded_svc::io::Write;
 use esp_idf_svc::http::client::EspHttpConnection;
 use log::info;
+use crate::SendingError;
 use crate::sensor::sensor_thread::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
 
@@ -46,8 +47,9 @@ impl WifiManager {
         }
         Ok(())
     }
-    pub fn send_measurements(&self, measurements: &[Measurement], domain: &str, config: SessionConfig) -> Result<(), WifiError> {
+    pub fn send_measurements(&self, measurements: &[Measurement], domain: &str, config: SessionConfig) -> Result<(), SendingError> {
         if measurements.is_empty() { return Ok(()) }
+        if !self.is_connected().map_err(|_| SendingError::ConnectionError)? {return Err(SendingError::ConnectionError)}
         let SessionType::FIXED { pm1_index, pm2_5_index, token, wifi_ssid: _, wifi_password: _ } = config.session_type.clone() else { panic!("Config error, expected fixed session") };
         let payload = self.encode_measurements(measurements, pm1_index, pm2_5_index)?;
         use esp_idf_svc::http::client::{Configuration as HttpConfiguration};
@@ -57,7 +59,7 @@ impl WifiManager {
              ..Default::default()
 
          };
-        let mut client = HttpClient::wrap(EspHttpConnection::new(http_config).map_err(|_| WifiError::Other)?);
+        let mut client = HttpClient::wrap(EspHttpConnection::new(http_config).map_err(|_| SendingError::ConfigError)?);
         let content_len_header = format!("{}", payload.len());
 
         let headers = [
@@ -67,12 +69,16 @@ impl WifiManager {
         ];
 
         let url = format!("https://{}/api/v3/fixed_sessions/{}/measurements", domain, config.session_uuid);
-        let mut request = client.request(Method::Post, &url, &headers).map_err(|_| WifiError::Other)?;
-        request.write_all(&payload).map_err(|_| WifiError::Other)?;
-        request.flush().map_err(|_| WifiError::Other)?;
+        let mut request = client.request(Method::Post, &url, &headers).map_err(|_| SendingError::Retry)?;
+        request.write_all(&payload).map_err(|_| SendingError::Overflow)?;
+        request.flush().map_err(|_| SendingError::Retry)?;
 
-        let mut response = request.submit().map_err(|_| WifiError::Other)?;
+        let mut response = request.submit().map_err(|_| SendingError::Retry)?;
         let status = response.status();
+
+        if !(200..400).contains(&(status as i32)) {
+            return Err(SendingError::ConfigError)
+        }
 
         info!(
             "POST measurements → {status}, sent {} records ({} bytes)",
@@ -105,10 +111,10 @@ impl WifiManager {
         } else { Err(WifiError::LockError) }
     }
 
-    fn encode_measurements(&self, measurements: &[Measurement], pm1_index: u8, pm2_5_index: u8) -> Result<Vec<u8>, WifiError> {
+    fn encode_measurements(&self, measurements: &[Measurement], pm1_index: u8, pm2_5_index: u8) -> Result<Vec<u8>, SendingError> {
         let count = measurements.len();
 
-        if count > u16::MAX as usize { return Err(WifiError::Other) }
+        if count > u16::MAX as usize { return Err(SendingError::Overflow) }
         let count = (count * 2) as u16;
 
         // 0xAB + 0xBA + u16 + N * 2 * (u32 + u8 + float) + u8
