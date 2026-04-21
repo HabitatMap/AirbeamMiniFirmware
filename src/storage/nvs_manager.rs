@@ -14,7 +14,7 @@ const KEY_PM1_INDEX: &str = "pm1_index";
 const KEY_PM2_5_INDEX: &str = "pm2_5_index";
 const KEY_TOKEN: &str = "token";
 const KEY_DOMAIN: &str = "domain";
-const DEFAULT_DOMAIN: &str = "aircasting.org";
+const DEFAULT_DOMAIN: &str = "experimental.aircasting.org"; //TODO: temp domain
 
 /// Manages persistent session data stored in the ESP32's NVS flash.
 pub struct NvsManager {
