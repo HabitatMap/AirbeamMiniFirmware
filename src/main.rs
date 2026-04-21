@@ -144,10 +144,10 @@ fn main() -> anyhow::Result<()> {
     };
     let domain = nvs_manager.get_domain()?;
 
-    let mut send_measurement = |m: Measurement| -> Result<(), ()> {
+    let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
         match &config.session_type {
             SessionType::MOBILE => {
-                ble.send_measurement( &m, batt.read(&adc, &mut vbat_pin).signed_percent, config.session_uuid).map_err(|_| ())
+                ble.send_measurement( &m, batt.read(&adc, &mut vbat_pin).signed_percent, config.session_uuid)
             },
             SessionType::FIXED {
                 pm1_index,
@@ -156,7 +156,7 @@ fn main() -> anyhow::Result<()> {
                 wifi_ssid,
                 wifi_password,
             } => {
-                wifi_man.send_measurements(&[m], domain.as_str(), config.clone()).map_err(|_| ())
+                wifi_man.send_measurements(&[m], domain.as_str(), config.clone())
             },
         }
     };
@@ -169,7 +169,7 @@ fn main() -> anyhow::Result<()> {
         if let Ok(event) = event {
             match event {
                 LoopEvent::Measurement(m) => {
-                    if let Err(()) = send_measurement(m) {
+                    if send_measurement(m).is_err() {
                         let _ = storage.save_measurement(MeasurementRecord::from_measurement(&m));
                     }
                 }
