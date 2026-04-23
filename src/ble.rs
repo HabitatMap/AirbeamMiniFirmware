@@ -1,6 +1,7 @@
-mod ble_protocol;
+pub mod ble_protocol;
 
 use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
+use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::{LoopEvent, SendingError};
 use esp32_nimble::enums::AuthReq;
@@ -17,7 +18,6 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
-use crate::sensor::measurement::Measurement;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
@@ -167,9 +167,24 @@ impl BleManager {
         F2: Fn() -> anyhow::Result<()>,
         W: Fn(&str, &str) -> anyhow::Result<()>,
     {
-        self.wait_for_connection(Self::get_timeout(saved_config.clone()))?;
+        //reconnect wifi on fixed session after timeout
+        if !self.wait_for_connection(Self::get_timeout(saved_config.clone()))? {
+            if let Some(config) = saved_config.clone() {
+                if let SessionType::FIXED {
+                    wifi_ssid,
+                    wifi_password,
+                    ..
+                } = config.session_type
+                {
+                    if let Ok(()) = connect_to_wifi(wifi_ssid.as_str(), wifi_password.as_str()) {
+                        return Ok(SetupResult::Continue);
+                    }
+                }
+            }
+        }
+
         // small delay so the client has time to subscribe to notifications
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(300));
 
         let status = if let Some(config) = saved_config.clone() {
             DeviceStatus::HasSavedSession {
@@ -240,9 +255,9 @@ impl BleManager {
                             Ok(()) => {
                                 return Ok(SetupResult::StartNew(config));
                             }
-                            Err(_) => {
-                                self.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig))?
-                            }
+                            Err(_) => self.send_response(DeviceResponse::Nack(
+                                ErrorCode::InvalidWifiCredentials,
+                            ))?,
                         }
                     } else {
                         self.send_response(DeviceResponse::Ready)?;
@@ -296,10 +311,7 @@ impl BleManager {
         }
     }
 
-    pub fn send_measurements(
-        &self,
-        measurements: &[Measurement],
-    ) -> Result<(), SendingError> {
+    pub fn send_measurements(&self, measurements: &[Measurement]) -> Result<(), SendingError> {
         let mut buf = [0u8; 244];
         let count = measurements.len() as u8;
         buf[0] = count;
@@ -309,8 +321,10 @@ impl BleManager {
                 return Err(SendingError::Overflow);
             }
             buf[offset..offset + 4].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
-            buf[offset + 4..offset + 6].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
-            buf[offset + 6..offset + 8].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
+            buf[offset + 4..offset + 6]
+                .copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
+            buf[offset + 6..offset + 8]
+                .copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
         }
         self.indicate_measurement_chr(&buf, true)
     }
@@ -378,14 +392,14 @@ impl BleManager {
         }
     }
 
-    fn notify_status(&self, status: &DeviceStatus) -> anyhow::Result<()> {
+    pub fn notify_status(&self, status: &DeviceStatus) -> anyhow::Result<()> {
         let mut buf = [0u8; 20];
         let len = status.encode(&mut buf);
         self.status_chr.lock().set_value(&buf[..len]).notify();
         Ok(())
     }
 
-    fn send_response(&self, resp: DeviceResponse) -> anyhow::Result<()> {
+    pub fn send_response(&self, resp: DeviceResponse) -> anyhow::Result<()> {
         let mut buf = [0u8; 244]; // max we'll send in one notification
         let len = resp.encode(&mut buf);
         self.response_chr.lock().set_value(&buf[..len]).notify();

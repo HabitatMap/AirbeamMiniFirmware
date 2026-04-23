@@ -170,4 +170,5 @@ pub enum ErrorCode {
     InvalidConfig = 0x02,
     StorageHasMeasurements = 0x03,
     ClearStorageFailed = 0x04,
+    InvalidWifiCredentials = 0x05,
 }
