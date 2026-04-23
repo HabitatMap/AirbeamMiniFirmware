@@ -1,2 +1,3 @@
 pub mod sensor_parser;
 pub mod sensor_thread;
+pub mod measurement;

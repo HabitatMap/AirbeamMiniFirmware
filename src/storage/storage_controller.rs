@@ -1,9 +1,9 @@
-use crate::sensor::sensor_thread::Measurement;
 use crate::storage::storage_iterator::MeasurementIter;
 use log::{error, info, warn};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
+use crate::sensor::measurement::Measurement;
 
 pub const MOUNT_POINT: &str = "/storage";
 pub const FILE_PATH: &str = "/storage/psm.bin";
@@ -14,45 +14,8 @@ const BUFFER_CAPACITY: usize = 10;
 //Record size is 2 start bytes + 1 byte number of measurements in a record + 8 bytes (timestamp + raw data) for each record + 1 byte checksum
 const MAX_RECORD_SIZE: usize = BUFFER_CAPACITY * 8 + 4;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct MeasurementRecord {
-    pub timestamp: u32,
-    pub pm1: u16,
-    pub pm2_5: u16,
-}
-
-impl MeasurementRecord {
-    pub fn new(timestamp: u32, pm1: u16, pm2_5: u16) -> Self {
-        Self {
-            timestamp,
-            pm1,
-            pm2_5,
-        }
-    }
-
-    pub fn from_measurement(m: &Measurement) -> Self {
-        Self {
-            timestamp: m.timestamp,
-            pm1: m.pm1_0_avg,
-            pm2_5: m.pm2_5_avg,
-        }
-    }
-}
-
-impl Ord for MeasurementRecord {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.timestamp.cmp(&other.timestamp)
-    }
-}
-
-impl PartialOrd for MeasurementRecord {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 struct StorageInner {
-    buffer: Vec<MeasurementRecord>,
+    buffer: Vec<Measurement>,
 }
 
 pub struct StorageManager {
@@ -77,7 +40,7 @@ impl StorageManager {
     }
 
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
-    pub fn save_measurement(&self, record: MeasurementRecord) -> anyhow::Result<()> {
+    pub fn save_measurement(&self, record: Measurement) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         inner.buffer.push(record);
 
@@ -115,8 +78,8 @@ impl StorageManager {
 
                 for record in &inner.buffer {
                     let ts_bytes = record.timestamp.to_le_bytes();
-                    let pm1_bytes = record.pm1.to_le_bytes();
-                    let pm2_bytes = record.pm2_5.to_le_bytes();
+                    let pm1_bytes = record.pm1_0_avg.to_le_bytes();
+                    let pm2_bytes = record.pm2_5_avg.to_le_bytes();
                     bytes.extend_from_slice(&ts_bytes);
                     bytes.extend_from_slice(&pm1_bytes);
                     bytes.extend_from_slice(&pm2_bytes);

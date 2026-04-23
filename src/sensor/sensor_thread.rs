@@ -6,6 +6,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use crate::sensor::measurement::Measurement;
 
 pub const START_BYTE_1: u8 = 0x42;
 pub const START_BYTE_2: u8 = 0x4D;
@@ -18,26 +19,6 @@ const WAKE_UP_SECONDS: u64 = 10;
 const PASSIVE_THRESHOLD: u64 = 3;
 
 const SENSOR_READOUT_TIMEOUT: u32 = 2300; //Longest possible time between the readouts
-#[derive(Debug, Clone, Copy)]
-pub struct Measurement {
-    pub pm1_0_avg: u16,
-    pub pm2_5_avg: u16,
-    pub timestamp: u32,
-}
-impl From<Measurement> for LoopEvent {
-    fn from(value: Measurement) -> Self {
-        LoopEvent::Measurement(value)
-    }
-}
-impl Measurement {
-    fn from(value: PmsMeasurement, timestamp: u32) -> Self {
-        Measurement {
-            pm1_0_avg: value.pm1_0_atm,
-            pm2_5_avg: value.pm2_5_atm,
-            timestamp,
-        }
-    }
-}
 
 pub struct SensorDriver {
     uart: Arc<Mutex<UartDriver<'static>>>,
@@ -240,7 +221,7 @@ impl SensorDriver {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .ok()
-                .map(|now| Measurement::from(pms, now.as_secs() as u32))
+                .map(|now| Measurement::from_pms_measurement(pms, now.as_secs() as u32))
         })?
     }
 

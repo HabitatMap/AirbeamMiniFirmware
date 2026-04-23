@@ -1,9 +1,7 @@
 mod ble_protocol;
 
 use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
-use crate::sensor::sensor_thread::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
-use crate::storage::storage_controller::MeasurementRecord;
 use crate::{LoopEvent, SendingError};
 use esp32_nimble::enums::AuthReq;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
@@ -19,6 +17,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use crate::sensor::measurement::Measurement;
 
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
@@ -299,7 +298,7 @@ impl BleManager {
 
     pub fn send_measurements(
         &self,
-        measurements: &[MeasurementRecord],
+        measurements: &[Measurement],
     ) -> Result<(), SendingError> {
         let mut buf = [0u8; 244];
         let count = measurements.len() as u8;
@@ -310,8 +309,8 @@ impl BleManager {
                 return Err(SendingError::Overflow);
             }
             buf[offset..offset + 4].copy_from_slice(measurement.timestamp.to_le_bytes().as_slice());
-            buf[offset + 4..offset + 6].copy_from_slice(measurement.pm1.to_le_bytes().as_slice());
-            buf[offset + 6..offset + 8].copy_from_slice(measurement.pm2_5.to_le_bytes().as_slice());
+            buf[offset + 4..offset + 6].copy_from_slice(measurement.pm1_0_avg.to_le_bytes().as_slice());
+            buf[offset + 6..offset + 8].copy_from_slice(measurement.pm2_5_avg.to_le_bytes().as_slice());
         }
         self.indicate_measurement_chr(&buf, true)
     }

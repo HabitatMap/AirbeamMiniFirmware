@@ -1,7 +1,8 @@
-use crate::storage::storage_controller::{MeasurementRecord, START_BYTES};
+use crate::storage::storage_controller::START_BYTES;
 use esp_idf_svc::sys::vTaskDelay;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
+use crate::sensor::measurement::Measurement;
 
 const MAX_LINE_MEASUREMENTS: usize = 10;
 const MEASUREMENT_SIZE: usize = 8; // u32 + u16 + u16
@@ -11,7 +12,7 @@ const MAX_LINE_SIZE: usize = LINE_HEADER_SIZE + MAX_LINE_MEASUREMENTS * MEASUREM
 const BUF_CAPACITY: usize = 4096;
 #[derive(Debug, Clone)]
 pub struct MeasurementLine {
-    pub measurements: Vec<MeasurementRecord>,
+    pub measurements: Vec<Measurement>,
     /// Bytes from end of file to the start of this line.
     /// Truncate file to `file_len - offset_from_end` to discard
     /// this line and everything after it (including skipped corruption).
@@ -77,7 +78,7 @@ impl MeasurementIter {
     }
 
     /// Try parsing a line that starts at `buf_pos` and ends exactly at cursor.
-    fn try_parse_at(&self, buf_pos: usize, end: usize) -> Option<Vec<MeasurementRecord>> {
+    fn try_parse_at(&self, buf_pos: usize, end: usize) -> Option<Vec<Measurement>> {
         let slice = &self.buf[buf_pos..end];
         let len = slice.len();
 
@@ -119,10 +120,10 @@ impl MeasurementIter {
         let mut measurements = Vec::with_capacity(count);
         for i in 0..count {
             let o = i * MEASUREMENT_SIZE;
-            measurements.push(MeasurementRecord {
+            measurements.push(Measurement {
                 timestamp: u32::from_le_bytes(data[o..o + 4].try_into().unwrap()),
-                pm1: u16::from_le_bytes(data[o + 4..o + 6].try_into().unwrap()),
-                pm2_5: u16::from_le_bytes(data[o + 6..o + 8].try_into().unwrap()),
+                pm1_0_avg: u16::from_le_bytes(data[o + 4..o + 6].try_into().unwrap()),
+                pm2_5_avg: u16::from_le_bytes(data[o + 6..o + 8].try_into().unwrap()),
             });
         }
 
