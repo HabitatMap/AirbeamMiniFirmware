@@ -3,6 +3,8 @@ use log::{error, info, warn};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
+use std::time::Duration;
+use crate::aggregator::MeasurementAggregator;
 use crate::sensor::measurement::Measurement;
 
 pub const MOUNT_POINT: &str = "/storage";
@@ -20,6 +22,7 @@ struct StorageInner {
 
 pub struct StorageManager {
     inner: Mutex<StorageInner>,
+    aggregator: Option<MeasurementAggregator>
 }
 
 impl StorageManager {
@@ -31,16 +34,34 @@ impl StorageManager {
         if let Err(e) = OpenOptions::new().append(true).create(true).open(FILE_PATH) {
             log::error!("Failed to create/open storage file: {}", e);
         }
-
         Self {
             inner: Mutex::new(StorageInner {
                 buffer: Vec::with_capacity(BUFFER_CAPACITY),
             }),
+            aggregator: None
         }
     }
 
+    pub fn set_aggregator(&mut self, interval: Duration) {
+        self.aggregator = if interval.as_secs() < 60 {
+            Some(MeasurementAggregator::new(interval))
+        } else {
+            None
+        };
+    }
+
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
-    pub fn save_measurement(&self, record: Measurement) -> anyhow::Result<()> {
+    pub fn save_measurement(&mut self, record: Measurement) -> anyhow::Result<()> {
+
+        let to_save = if let Some(mut aggregator) = self.aggregator.as_mut() {
+            aggregator.average_measurement(record.clone())
+        } else {
+            Some ( record )
+        };
+
+        if to_save.is_none() {
+            return Ok(());
+        }
         let mut inner = self.inner.lock().unwrap();
         inner.buffer.push(record);
 

@@ -108,7 +108,7 @@ fn main() -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::channel();
     let sensor = SensorDriver::new(uart);
     let led_command = start_led_thread(led_pins)?;
-    let storage = StorageManager::new();
+    let mut storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs.clone())?;
     let name = format!("AirBeamMini:{}", mac_str);
     let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
@@ -143,6 +143,8 @@ fn main() -> anyhow::Result<()> {
     } else {
         nvs_manager.get_session_config()?.unwrap()
     };
+
+    storage.set_aggregator(config.interval);
     let domain = nvs_manager.get_domain()?;
 
     let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
@@ -184,7 +186,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());
-    let mut aggregator = MeasurementAggregator::new(config.interval);
     let mut last_time_update = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
     loop {
         let event = event_rx.recv_timeout(Duration::from_millis(100));

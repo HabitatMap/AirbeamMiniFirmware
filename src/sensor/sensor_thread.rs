@@ -1,3 +1,4 @@
+use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use crate::LoopEvent;
 use esp_idf_svc::hal::uart::UartDriver;
@@ -6,7 +7,6 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use crate::sensor::measurement::Measurement;
 
 pub const START_BYTE_1: u8 = 0x42;
 pub const START_BYTE_2: u8 = 0x4D;
@@ -47,7 +47,7 @@ impl SensorDriver {
         let should_sleep = Self::should_sleep(period);
 
         thread::spawn(move || {
-            log::info!("Sensor Thread: Started.");
+            info!("Sensor Thread: Started.");
             if let Ok(uart) = uart_shared.lock() {
                 //wake up sensor for active mode
 
@@ -75,12 +75,12 @@ impl SensorDriver {
                 //we wait for stop signal or sleep time to expire
                 match stop_rx.recv_timeout(sleep_time) {
                     Ok(_) | Err(RecvTimeoutError::Disconnected) => {
-                        log::info!("Stop signal received. Shutting down...");
+                        info!("Stop signal received. Shutting down...");
                         break; // Exit the loop
                     }
                     Err(RecvTimeoutError::Timeout) => {
                         // Timeout passed, just continue the loop
-                        log::info!("Sleep time expired. Continuing...");
+                        info!("Sleep time expired. Continuing...");
                     }
                 }
                 if let Ok(uart) = uart_shared.lock() {
@@ -112,7 +112,7 @@ impl SensorDriver {
                     //for averaging_time <= 3 seconds, we read in active mode
                     let measurement = Self::averaging_loop(averaging_time, read_byte, read_command);
                     if measurement.is_none() {
-                        log::warn!("No measurement scanned. Continuing...");
+                        warn!("No measurement scanned. Continuing...");
                     }
                     if should_sleep {
                         let _ = uart.write(&CMD_SLEEP);
@@ -128,7 +128,7 @@ impl SensorDriver {
             // When loop breaks due to stop command, put sensor to sleep
             if let Ok(uart) = uart_shared.lock() {
                 let _ = uart.write(&CMD_SLEEP);
-                log::info!("Sensor command: SLEEP sent.");
+                info!("Sensor command: SLEEP sent.");
             }
         });
         stop_tx
@@ -149,13 +149,11 @@ impl SensorDriver {
         let instant = Instant::now();
 
         while duration > instant.elapsed() {
-            log::info!("Averaging loop: {} seconds remaining", duration.as_secs());
-            read_command();
+            read_command(); //TODO: slowdown? current speed 800meas/min
             if let Some(parsed) = Self::read_uart(&mut read_byte, Duration::from_secs(5)) {
                 pm1_0_sum += parsed.pm1_0_avg as u32;
                 pm2_5_sum += parsed.pm2_5_avg as u32;
                 count += 1;
-                log::info!("Read successful. Count: {}", count);
             }
         }
 
@@ -212,7 +210,7 @@ impl SensorDriver {
                     }
                 }
                 _ => {
-                    log::warn!("UART read timeout or error.");
+                    warn!("UART read timeout or error.");
                     return None;
                 }
             }
@@ -229,7 +227,8 @@ impl SensorDriver {
     pub(self) fn get_loop_durations(period: Duration) -> (Duration, Duration) {
         let seconds = period.as_secs();
         match seconds {
-            0..=60 => (Duration::from_millis(10), Duration::from_secs(1)), //no sleep, active mode
+            0..=59 => (Duration::from_millis(10), Duration::from_secs(1)), //no sleep, active mode
+            60 => (Duration::from_millis(10), Duration::from_secs(60)), //
             _ => {
                 let collection_time = (seconds / 2).clamp(30, 60);
                 (
