@@ -10,33 +10,34 @@ mod wifi;
 use crate::aggregator::MeasurementAggregator;
 use crate::autosync::sync_from_storage;
 use crate::battery::{BatteryMonitor, BatteryState};
+use crate::ble::ble_protocol::{DeviceResponse, ErrorCode};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
+use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
+use crate::wifi::wifi_manager::WifiManager;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::hal::adc::attenuation::DB_12;
 use esp_idf_svc::hal::adc::oneshot::config::{AdcChannelConfig, Calibration};
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::gpio;
+use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
 use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
+use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::{settimeofday, timeval};
+use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::hal::units::Hertz;
-use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use uuid::Uuid;
-use crate::sensor::measurement::Measurement;
-use crate::wifi::wifi_manager::WifiManager;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -51,7 +52,7 @@ fn main() -> anyhow::Result<()> {
     unsafe {
         esp_idf_svc::sys::esp_read_mac(
             mac.as_mut_ptr(),
-            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_BT
+            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_BT,
         );
     }
     let mac_str = format!(
@@ -116,7 +117,7 @@ fn main() -> anyhow::Result<()> {
     let esp_wifi = EspWifi::new(peripherals.modem.split().0, sys_loop.clone(), Some(nvs))?;
     let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
     let wifi_manager = WifiManager::new(blocking);
-    
+
     let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
         nvs_manager.clear_session_config();
         error!("Failed to get session config: {:?}", e);
@@ -132,16 +133,14 @@ fn main() -> anyhow::Result<()> {
             info!("TODO: sync storage");
             Ok(())
         },
-        |ssid, password| {
-            wifi_manager.connect(ssid, password)
-        },
+        |ssid, password| wifi_manager.connect(ssid, password),
     )?;
 
-    let config = if let SetupResult::StartNew(config) = result {
+    let config = if let SetupResult::StartNew(config) = &result {
         nvs_manager.set_session_config(&config)?;
         config
     } else {
-        nvs_manager.get_session_config()?.unwrap()
+        &nvs_manager.get_session_config()?.unwrap()
     };
 
     storage.set_aggregator(config.interval);
@@ -149,35 +148,35 @@ fn main() -> anyhow::Result<()> {
 
     let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
         match &config.session_type {
-            SessionType::MOBILE => {
-                ble.send_measurement( &m, batt.read(&adc, &mut vbat_pin).signed_percent, config.session_uuid)
-            },
-            _ => {
-                wifi_manager.send_measurements(&[m], domain.as_str(), config.clone(), event_tx.clone())
-            },
+            SessionType::MOBILE => ble.send_measurement(
+                &m,
+                batt.read(&adc, &mut vbat_pin).signed_percent,
+                config.session_uuid,
+            ),
+            _ => wifi_manager.send_measurements(
+                &[m],
+                domain.as_str(),
+                config.clone(),
+                event_tx.clone(),
+            ),
         }
     };
 
     let mut send_measurements = |measurements: &[Measurement]| -> Result<(), SendingError> {
         match &config.session_type {
-            SessionType::MOBILE => {
-                ble.send_measurements(&measurements)
-            },
-            _ => {
-                wifi_manager.send_measurements(&measurements, domain.as_str(), config.clone(), event_tx.clone())
-            }
+            SessionType::MOBILE => ble.send_measurements(&measurements),
+            _ => wifi_manager.send_measurements(
+                &measurements,
+                domain.as_str(),
+                config.clone(),
+                event_tx.clone(),
+            ),
         }
     };
 
-    let connected = || {
-        match &config.session_type {
-            SessionType::MOBILE => {
-                ble.is_connected()
-            },
-            SessionType::FIXED { .. } => {
-                wifi_manager.is_connected()
-            }
-        }
+    let connected = || match &config.session_type {
+        SessionType::MOBILE => ble.is_connected(),
+        SessionType::FIXED { .. } => wifi_manager.is_connected(),
     };
 
     while event_rx.try_recv().is_ok() {
@@ -187,12 +186,33 @@ fn main() -> anyhow::Result<()> {
 
     let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());
     let mut last_time_update = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+    let mut on_wifi_error = if let SessionType::FIXED { .. } = config.session_type {
+        if let SetupResult::Continue = result {
+            None
+        } else {
+            Some(|| {
+                if ble.is_connected() {
+                    ble.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig));
+                };
+            })
+        }
+    } else {
+        None
+    };
+
     loop {
         let event = event_rx.recv_timeout(Duration::from_millis(100));
         if let Ok(event) = event {
             match event {
                 LoopEvent::Measurement(m) => {
+                    let notify = on_wifi_error.take();
+
                     if send_measurement(m).is_err() {
+                        if let Some(f) = notify {
+                            f();
+                            break;
+                        }
                         let _ = storage.save_measurement(m);
                     }
                 }
@@ -223,9 +243,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         if storage.has_measurements() && connected() {
-            if let Err(e) = sync_from_storage(&config, &storage, |m| {
-                send_measurements(m)
-            }) {
+            if let Err(e) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
                 error!("Failed to sync");
             }
         }
