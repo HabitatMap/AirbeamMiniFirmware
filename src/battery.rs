@@ -1,7 +1,7 @@
-use std::borrow::Borrow;
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::adc::{AdcChannel, ADC1, ADCU1};
 use esp_idf_svc::hal::gpio::{Gpio3, Gpio4, Input, PinDriver, Pull};
+use std::borrow::Borrow;
 use std::time::Instant;
 // Divider ratio: V_bat = V_pin * 1499 / 1000  (e.g. 499kΩ top + 1000kΩ bottom)
 const DIVIDER_RATIO_NUM: u32 = 1499;
@@ -35,13 +35,19 @@ impl<'a> BatteryMonitor<'a> {
         &self,
         adc: &AdcDriver<'a, ADCU1>,
         // We replace `Gpio3` and the exact Borrow type with `impl` constraints
-        pin: &mut AdcChannelDriver<'a, impl AdcChannel<AdcUnit = ADCU1>, impl Borrow<AdcDriver<'a, ADCU1>>>,
-    ) -> BatteryState { // Assuming BatteryState is defined in your code
+        pin: &mut AdcChannelDriver<
+            'a,
+            impl AdcChannel<AdcUnit = ADCU1>,
+            impl Borrow<AdcDriver<'a, ADCU1>>,
+        >,
+    ) -> BatteryState {
+        // Assuming BatteryState is defined in your code
         let mut sum: u32 = 0;
         let mut count: u16 = 0;
         let start = Instant::now();
 
-        while start.elapsed().as_millis() < SAMPLE_WINDOW_MS { // Assuming SAMPLE_WINDOW_MS is defined
+        while start.elapsed().as_millis() < SAMPLE_WINDOW_MS {
+            // Assuming SAMPLE_WINDOW_MS is defined
             if let Ok(mv) = adc.read(pin) {
                 sum += mv as u32;
                 count += 1;

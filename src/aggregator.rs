@@ -1,5 +1,5 @@
-use std::time::Duration;
 use crate::sensor::measurement::Measurement;
+use std::time::Duration;
 
 const MAX_DURATION_FOR_AVERAGE: u32 = 59;
 
@@ -16,10 +16,7 @@ impl MeasurementAggregator {
         }
     }
 
-    pub fn average_measurement(
-        &mut self,
-        measurement: Measurement,
-    ) -> Option<Measurement> {
+    pub fn average_measurement(&mut self, measurement: Measurement) -> Option<Measurement> {
         if self.duration > MAX_DURATION_FOR_AVERAGE {
             return Some(measurement);
         }

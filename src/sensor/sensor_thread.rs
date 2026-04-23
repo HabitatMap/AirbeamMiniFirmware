@@ -228,7 +228,7 @@ impl SensorDriver {
         let seconds = period.as_secs();
         match seconds {
             0..=59 => (Duration::from_millis(10), Duration::from_secs(1)), //no sleep, active mode
-            60 => (Duration::from_millis(10), Duration::from_secs(60)), //
+            60 => (Duration::from_millis(10), Duration::from_secs(60)),    //
             _ => {
                 let collection_time = (seconds / 2).clamp(30, 60);
                 (

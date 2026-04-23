@@ -1,11 +1,11 @@
+use crate::aggregator::MeasurementAggregator;
+use crate::sensor::measurement::Measurement;
 use crate::storage::storage_iterator::MeasurementIter;
 use log::{error, info, warn};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Mutex;
 use std::time::Duration;
-use crate::aggregator::MeasurementAggregator;
-use crate::sensor::measurement::Measurement;
 
 pub const MOUNT_POINT: &str = "/storage";
 pub const FILE_PATH: &str = "/storage/psm.bin";
@@ -22,7 +22,7 @@ struct StorageInner {
 
 pub struct StorageManager {
     inner: Mutex<StorageInner>,
-    aggregator: Option<MeasurementAggregator>
+    aggregator: Option<MeasurementAggregator>,
 }
 
 impl StorageManager {
@@ -38,7 +38,7 @@ impl StorageManager {
             inner: Mutex::new(StorageInner {
                 buffer: Vec::with_capacity(BUFFER_CAPACITY),
             }),
-            aggregator: None
+            aggregator: None,
         }
     }
 
@@ -52,11 +52,10 @@ impl StorageManager {
 
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
     pub fn save_measurement(&mut self, record: Measurement) -> anyhow::Result<()> {
-
         let to_save = if let Some(mut aggregator) = self.aggregator.as_mut() {
             aggregator.average_measurement(record.clone())
         } else {
-            Some ( record )
+            Some(record)
         };
 
         if to_save.is_none() {

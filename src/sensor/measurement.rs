@@ -1,6 +1,6 @@
-use uuid::Timestamp;
-use crate::LoopEvent;
 use crate::sensor::sensor_parser::PmsMeasurement;
+use crate::LoopEvent;
+use uuid::Timestamp;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Measurement {
@@ -21,7 +21,7 @@ impl Measurement {
             timestamp,
         }
     }
-    
+
     pub fn from_pms_measurement(pms: PmsMeasurement, timestamp: u32) -> Self {
         Measurement::new(pms.pm1_0_atm, pms.pm2_5_atm, timestamp)
     }

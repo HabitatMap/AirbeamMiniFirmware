@@ -1,6 +1,8 @@
-use std::borrow::Borrow;
 use esp_idf_svc::hal::gpio::OutputPin;
-use esp_idf_svc::hal::ledc::{LedcChannel, LedcDriver, LedcTimer, LedcTimerDriver, LowSpeed, SpeedMode};
+use esp_idf_svc::hal::ledc::{
+    LedcChannel, LedcDriver, LedcTimer, LedcTimerDriver, LowSpeed, SpeedMode,
+};
+use std::borrow::Borrow;
 pub struct RgbLed<'a> {
     red: LedcDriver<'a>,
     green: LedcDriver<'a>,
@@ -18,9 +20,9 @@ impl<'a> RgbLed<'a> {
         c_blue: C2,
     ) -> anyhow::Result<Self>
     where
-    // We tell the compiler EXACTLY what these types are allowed to be.
-    // T must be something that borrows a LowSpeed timer (like a & reference)
-    // and it must be Copy so we can use it three times.
+        // We tell the compiler EXACTLY what these types are allowed to be.
+        // T must be something that borrows a LowSpeed timer (like a & reference)
+        // and it must be Copy so we can use it three times.
         T: Borrow<LedcTimerDriver<'a, LowSpeed>> + Copy,
         C0: LedcChannel<SpeedMode = LowSpeed> + 'a,
         C1: LedcChannel<SpeedMode = LowSpeed> + 'a,
