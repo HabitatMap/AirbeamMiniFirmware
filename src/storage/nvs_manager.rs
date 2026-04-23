@@ -40,7 +40,8 @@ impl NvsManager {
 
     pub fn get_domain(&self) -> Result<String, EspError> {
         let mut buffer = [0u8; 33];
-        let domain = self.nvs
+        let domain = self
+            .nvs
             .get_str(KEY_DOMAIN, &mut buffer)?
             .map(|s| s.to_string());
         Ok(domain.unwrap_or_else(|| DEFAULT_DOMAIN.to_string()))

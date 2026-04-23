@@ -1,8 +1,8 @@
+use crate::sensor::measurement::Measurement;
 use crate::storage::storage_controller::START_BYTES;
 use esp_idf_svc::sys::vTaskDelay;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use crate::sensor::measurement::Measurement;
 
 const MAX_LINE_MEASUREMENTS: usize = 10;
 const MEASUREMENT_SIZE: usize = 8; // u32 + u16 + u16

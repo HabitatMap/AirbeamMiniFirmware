@@ -1,7 +1,7 @@
-use crate::storage::session_config::{SessionConfig, SessionType};
-use crate::storage::storage_controller:: StorageManager;
-use crate::SendingError;
 use crate::sensor::measurement::Measurement;
+use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::storage::storage_controller::StorageManager;
+use crate::SendingError;
 
 pub fn sync_from_storage<F>(
     config: &SessionConfig,
