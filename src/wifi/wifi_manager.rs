@@ -1,3 +1,4 @@
+use std::sync::mpsc::Sender;
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use embedded_svc::{
@@ -7,9 +8,9 @@ use embedded_svc::{
 use embedded_svc::http::Method;
 use embedded_svc::io::Write;
 use esp_idf_svc::http::client::EspHttpConnection;
-use log::info;
-use crate::SendingError;
-use crate::sensor::sensor_thread::Measurement;
+use log::{error, info};
+use crate::{LoopEvent, SendingError};
+use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
 
 
@@ -30,11 +31,10 @@ impl WifiManager {
 
     pub fn connect(&self, wifi_ssid: &str, wifi_password: &str) -> anyhow::Result<()> {
         if let Some(mut wifi) = self.wifi.try_lock() {
-            let auth = if wifi_password.is_empty() { AuthMethod::None } else { AuthMethod::WPA2Personal };
             let wifi_config = Configuration::Client(ClientConfiguration {
                 ssid: wifi_ssid.try_into()?,
                 bssid: None,
-                auth_method: auth,
+                auth_method: AuthMethod::WPA2Personal,
                 password: wifi_password.try_into()?,
                 channel: None,
                 ..Default::default()
@@ -47,9 +47,9 @@ impl WifiManager {
         }
         Ok(())
     }
-    pub fn send_measurements(&self, measurements: &[Measurement], domain: &str, config: SessionConfig) -> Result<(), SendingError> {
+    pub fn send_measurements(&self, measurements: &[Measurement], domain: &str, config: SessionConfig, event_tx: Sender<LoopEvent>) -> Result<(), SendingError> {
         if measurements.is_empty() { return Ok(()) }
-        if !self.is_connected().map_err(|_| SendingError::ConnectionError)? {return Err(SendingError::ConnectionError)}
+        if !self.is_connected() {return Err(SendingError::ConnectionError)}
         let SessionType::FIXED { pm1_index, pm2_5_index, token, wifi_ssid: _, wifi_password: _ } = config.session_type.clone() else { panic!("Config error, expected fixed session") };
         let payload = self.encode_measurements(measurements, pm1_index, pm2_5_index)?;
         use esp_idf_svc::http::client::{Configuration as HttpConfiguration};
@@ -72,12 +72,13 @@ impl WifiManager {
         let mut request = client.request(Method::Post, &url, &headers).map_err(|_| SendingError::Retry)?;
         request.write_all(&payload).map_err(|_| SendingError::Overflow)?;
         request.flush().map_err(|_| SendingError::Retry)?;
-
         let mut response = request.submit().map_err(|_| SendingError::Retry)?;
         let status = response.status();
 
-        if !(200..400).contains(&(status as i32)) {
-            return Err(SendingError::ConfigError)
+        if let Some(epoch) = response.header("X-Server-Time") {
+            if let Ok(epoch) = epoch.parse::<i64>() {
+                event_tx.send(LoopEvent::TimeUpdate(epoch)).unwrap();
+            }
         }
 
         info!(
@@ -86,15 +87,10 @@ impl WifiManager {
             payload.len()
         );
 
-        let mut buf = [0u8; 512];
-        let n = response.read(&mut buf).unwrap_or(0);
-        let body = core::str::from_utf8(&buf[..n]).unwrap_or("<invalid utf8>");
-
         if !(200..300).contains(&(status as i32)) {
-            let mut buf = [0u8; 256];
-            let n = response.read(&mut buf).unwrap_or(0);
-            let body = core::str::from_utf8(&buf[..n]).unwrap_or("<binary>");
+            return Err(SendingError::ConfigError)
         }
+
         Ok(())
     }
 
@@ -105,10 +101,10 @@ impl WifiManager {
         Ok(())
     }
 
-    pub fn is_connected(&self) -> Result<bool, WifiError> {
+    pub fn is_connected(&self) -> bool {
         if let Some(mut wifi) = self.wifi.try_lock() {
-            wifi.is_connected().map_err(|_| WifiError::Other)
-        } else { Err(WifiError::LockError) }
+            wifi.is_connected().unwrap_or(false)
+        } else { false }
     }
 
     fn encode_measurements(&self, measurements: &[Measurement], pm1_index: u8, pm2_5_index: u8) -> Result<Vec<u8>, SendingError> {

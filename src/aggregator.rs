@@ -1,11 +1,11 @@
-use crate::storage::storage_controller::MeasurementRecord;
 use std::time::Duration;
+use crate::sensor::measurement::Measurement;
 
 const MAX_DURATION_FOR_AVERAGE: u32 = 59;
 
 pub struct MeasurementAggregator {
     duration: u32,
-    records: Vec<MeasurementRecord>,
+    records: Vec<Measurement>,
 }
 
 impl MeasurementAggregator {
@@ -18,8 +18,8 @@ impl MeasurementAggregator {
 
     pub fn average_measurement(
         &mut self,
-        measurement: MeasurementRecord,
-    ) -> Option<MeasurementRecord> {
+        measurement: Measurement,
+    ) -> Option<Measurement> {
         if self.duration > MAX_DURATION_FOR_AVERAGE {
             return Some(measurement);
         }
@@ -38,14 +38,14 @@ impl MeasurementAggregator {
         }
     }
 
-    fn get_average(&self) -> MeasurementRecord {
+    fn get_average(&self) -> Measurement {
         let count = self.records.len() as u32;
-        let pm1_avg = self.records.iter().map(|r| r.pm1 as u32).sum::<u32>() / count;
-        let pm2_5_avg = self.records.iter().map(|r| r.pm2_5 as u32).sum::<u32>() / count;
-        MeasurementRecord {
+        let pm1_avg = self.records.iter().map(|r| r.pm1_0_avg as u32).sum::<u32>() / count;
+        let pm2_5_avg = self.records.iter().map(|r| r.pm2_5_avg as u32).sum::<u32>() / count;
+        Measurement {
             timestamp: self.records.iter().max().unwrap().timestamp,
-            pm1: pm1_avg as u16,
-            pm2_5: pm2_5_avg as u16,
+            pm1_0_avg: pm1_avg as u16,
+            pm2_5_avg: pm2_5_avg as u16,
         }
     }
 }
