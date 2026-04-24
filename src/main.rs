@@ -7,9 +7,8 @@ mod sensor;
 mod storage;
 mod wifi;
 
-use crate::aggregator::MeasurementAggregator;
 use crate::autosync::sync_from_storage;
-use crate::battery::{BatteryMonitor, BatteryState};
+use crate::battery::BatteryMonitor;
 use crate::ble::ble_protocol::{DeviceResponse, ErrorCode};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
@@ -182,6 +181,12 @@ fn main() -> anyhow::Result<()> {
     while event_rx.try_recv().is_ok() {
         //Drop set time from setup
         thread::sleep(Duration::from_millis(10));
+    }
+
+    if let SessionType::FIXED { token, .. } = config.session_type {
+        if connected() {
+            let _ = wifi_manager.get_time(domain.as_str(), token, config.session_uuid, event_tx.clone());
+        }
     }
 
     let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());

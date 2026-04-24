@@ -12,6 +12,7 @@ use esp_idf_svc::http::client::EspHttpConnection;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
 use std::sync::mpsc::Sender;
+use uuid::Uuid;
 
 const MAGIC: &[u8; 2] = &[0xAB, 0xBA];
 
@@ -47,6 +48,45 @@ impl WifiManager {
         }
         Ok(())
     }
+
+    pub fn get_time(&self, domain: &str, token: u128, uuid: Uuid, event_tx: Sender<LoopEvent>) -> Result<(), SendingError> {
+        if !self.is_connected() {
+            return Err(SendingError::ConnectionError);
+        }
+
+        use esp_idf_svc::http::client::Configuration as HttpConfiguration;
+        let http_config = &HttpConfiguration {
+            crt_bundle_attach: Some(esp_idf_svc::sys::esp_crt_bundle_attach),
+            ..Default::default()
+        };
+        let mut client = HttpClient::wrap(
+            EspHttpConnection::new(http_config).map_err(|_| SendingError::ConfigError)?,
+        );
+
+        let headers = [
+            ("Content-Type", "application/octet-stream"),
+            ("Authorization", &format!("Bearer {:032x}", token)),
+        ];
+
+        let url = format!(
+            "https://{}/api/v3/fixed_sessions/{}/measurements",
+            domain, uuid
+        );
+        let mut request = client
+            .request(Method::Post, &url, &headers)
+            .map_err(|_| SendingError::Retry)?;
+        request.flush().map_err(|_| SendingError::Retry)?;
+        let mut response = request.submit().map_err(|_| SendingError::Retry)?;
+        let status = response.status();
+
+        if let Some(epoch) = response.header("X-Server-Time") {
+            if let Ok(epoch) = epoch.parse::<i64>() {
+                event_tx.send(LoopEvent::TimeUpdate(epoch)).unwrap();
+            }
+        }
+        Ok(())
+    }
+
     pub fn send_measurements(
         &self,
         measurements: &[Measurement],
