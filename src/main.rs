@@ -81,12 +81,12 @@ fn main() -> anyhow::Result<()> {
 
     // ADC driver + channel live here in main (can't be in the same struct)
     let adc = AdcDriver::new(peripherals.adc1)?;
-    let config = AdcChannelConfig {
+    let adc_config = AdcChannelConfig {
         attenuation: DB_12,
         calibration: Calibration::None,
         ..Default::default()
     };
-    let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &config)?;
+    let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &adc_config)?;
 
     // Battery monitor owns the USB sense pin
     let batt = BatteryMonitor::new(peripherals.pins.gpio4)?;
@@ -112,148 +112,157 @@ fn main() -> anyhow::Result<()> {
     let mut nvs_manager = NvsManager::new(nvs.clone())?;
     let name = format!("AirBeamMini:{}", mac_str);
     let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
-
     let esp_wifi = EspWifi::new(peripherals.modem.split().0, sys_loop.clone(), Some(nvs))?;
     let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
     let wifi_manager = WifiManager::new(blocking);
 
-    let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
-        nvs_manager.clear_session_config();
-        error!("Failed to get session config: {:?}", e);
-        None
-    });
-
-    let result = ble.run_setup(
-        config,
-        storage.has_measurements(),
-        || batt.read(&adc, &mut vbat_pin).signed_percent,
-        || storage.clear_measurements(),
-        || {
-            info!("TODO: sync storage");
-            Ok(())
-        },
-        |ssid, password| wifi_manager.connect(ssid, password),
-    )?;
-
-    let config = if let SetupResult::StartNew(config) = &result {
-        nvs_manager.set_session_config(&config)?;
-        config
-    } else {
-        &nvs_manager.get_session_config()?.unwrap()
-    };
-
-    storage.set_aggregator(config.interval);
-    let domain = nvs_manager.get_domain()?;
-
-    let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
-        match &config.session_type {
-            SessionType::MOBILE => ble.send_measurement(
-                &m,
-                batt.read(&adc, &mut vbat_pin).signed_percent,
-                config.session_uuid,
-            ),
-            _ => wifi_manager.send_measurements(
-                &[m],
-                domain.as_str(),
-                config.clone(),
-                event_tx.clone(),
-            ),
-        }
-    };
-
-    let mut send_measurements = |measurements: &[Measurement]| -> Result<(), SendingError> {
-        match &config.session_type {
-            SessionType::MOBILE => ble.send_measurements(&measurements),
-            _ => wifi_manager.send_measurements(
-                &measurements,
-                domain.as_str(),
-                config.clone(),
-                event_tx.clone(),
-            ),
-        }
-    };
-
-    let connected = || match &config.session_type {
-        SessionType::MOBILE => ble.is_connected(),
-        SessionType::FIXED { .. } => wifi_manager.is_connected(),
-    };
-
-    while event_rx.try_recv().is_ok() {
-        //Drop set time from setup
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    if let SessionType::FIXED { token, .. } = config.session_type {
-        if connected() {
-            let _ = wifi_manager.get_time(domain.as_str(), token, config.session_uuid, event_tx.clone());
-        }
-    }
-
-    let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());
-    let mut last_time_update = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-
-    let mut on_wifi_error = if let SessionType::FIXED { .. } = config.session_type {
-        if let SetupResult::Continue = result {
-            None
-        } else {
-            Some(|| {
-                if ble.is_connected() {
-                    ble.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig));
-                };
-            })
-        }
-    } else {
-        None
-    };
-
     loop {
-        let event = event_rx.recv_timeout(Duration::from_millis(100));
-        if let Ok(event) = event {
-            match event {
-                LoopEvent::Measurement(m) => {
-                    let notify = on_wifi_error.take();
+        let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
+            nvs_manager.clear_session_config();
+            error!("Failed to get session config: {:?}", e);
+            None
+        });
 
-                    if send_measurement(m).is_err() {
-                        if let Some(f) = notify {
-                            f();
-                            break;
-                        }
-                        let _ = storage.save_measurement(m);
-                    }
-                }
+        let result = ble.run_setup(
+            config,
+            storage.has_measurements(),
+            || batt.read(&adc, &mut vbat_pin).signed_percent,
+            || storage.clear_measurements(),
+            || {
+                info!("TODO: sync storage");
+                Ok(())
+            },
+            |ssid, password| wifi_manager.connect(ssid, password),
+        )?;
 
-                LoopEvent::TimeUpdate(time_epoch) => {
-                    let tv = timeval {
-                        tv_sec: time_epoch,
-                        tv_usec: 0,
-                    };
-                    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
-                    if now != time_epoch && time_epoch - last_time_update >= 60 {
-                        unsafe { settimeofday(&tv, std::ptr::null()) };
-                        last_time_update = time_epoch;
-                        info!("Set time to {}", time_epoch);
-                    }
-                }
+        let config = if let SetupResult::StartNew(config) = &result {
+            nvs_manager.set_session_config(&config)?;
+            config
+        } else {
+            &nvs_manager.get_session_config()?.unwrap()
+        };
 
-                LoopEvent::Stop { start_sync } => {
-                    let _ = stop_tx.send(());
-                    if start_sync {
-                        //TODO: wifi sync
-                    }
-                    let _ = storage.clear_measurements();
-                    nvs_manager.clear_session_config();
-                    break;
-                }
+        storage.set_aggregator(config.interval);
+        let domain = nvs_manager.get_domain()?;
+
+        let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
+            match &config.session_type {
+                SessionType::MOBILE => ble.send_measurement(
+                    &m,
+                    batt.read(&adc, &mut vbat_pin).signed_percent,
+                    config.session_uuid,
+                ),
+                _ => wifi_manager.send_measurements(
+                    &[m],
+                    domain.as_str(),
+                    config.clone(),
+                    event_tx.clone(),
+                ),
+            }
+        };
+
+        let send_measurements = |measurements: &[Measurement]| -> Result<(), SendingError> {
+            match &config.session_type {
+                SessionType::MOBILE => ble.send_measurements(&measurements),
+                _ => wifi_manager.send_measurements(
+                    &measurements,
+                    domain.as_str(),
+                    config.clone(),
+                    event_tx.clone(),
+                ),
+            }
+        };
+
+        let connected = || match &config.session_type {
+            SessionType::MOBILE => ble.is_connected(),
+            SessionType::FIXED { .. } => wifi_manager.is_connected(),
+        };
+
+        while event_rx.try_recv().is_ok() {
+            //Drop set time from setup
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        if let SessionType::FIXED { token, .. } = config.session_type {
+            if connected() {
+                let _ = wifi_manager.get_time(
+                    domain.as_str(),
+                    token,
+                    config.session_uuid,
+                    event_tx.clone(),
+                );
             }
         }
 
-        if storage.has_measurements() && connected() {
-            if let Err(e) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
-                error!("Failed to sync");
+        let stop_tx = sensor.start_sensor_task(config.interval, event_tx.clone());
+        let mut last_time_update = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+        let mut on_wifi_error = if let SessionType::FIXED { .. } = config.session_type {
+            if let SetupResult::Continue = result {
+                None
+            } else {
+                Some(|| {
+                    if ble.is_connected() {
+                        let _ = ble.send_response(DeviceResponse::Nack(ErrorCode::InvalidConfig));
+                    };
+                })
+            }
+        } else {
+            None
+        };
+
+        loop {
+            let event = event_rx.recv_timeout(Duration::from_millis(100));
+            if let Ok(event) = event {
+                match event {
+                    LoopEvent::Measurement(m) => {
+                        let notify = on_wifi_error.take();
+
+                        if send_measurement(m).is_err() {
+                            if let Some(f) = notify {
+                                f();
+                                break;
+                            }
+                            let _ = storage.save_measurement(m);
+                        } else {
+                            if ble.is_connected() {
+                                let _ = ble.send_response(DeviceResponse::Ready);
+                            }
+                        }
+                    }
+
+                    LoopEvent::TimeUpdate(time_epoch) => {
+                        let tv = timeval {
+                            tv_sec: time_epoch,
+                            tv_usec: 0,
+                        };
+                        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+                        if now != time_epoch && time_epoch - last_time_update >= 60 {
+                            unsafe { settimeofday(&tv, std::ptr::null()) };
+                            last_time_update = time_epoch;
+                            info!("Set time to {}", time_epoch);
+                        }
+                    }
+
+                    LoopEvent::Stop { start_sync } => {
+                        let _ = stop_tx.send(());
+                        if start_sync {
+                            //TODO: wifi sync
+                        }
+                        let _ = storage.clear_measurements();
+                        nvs_manager.clear_session_config();
+                        break;
+                    }
+                }
+            }
+
+            if storage.has_measurements() && connected() {
+                if let Err(e) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
+                    error!("Failed to sync");
+                }
             }
         }
     }
-    Ok(())
 }
 
 #[derive(Debug)]

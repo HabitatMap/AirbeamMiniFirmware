@@ -49,7 +49,13 @@ impl WifiManager {
         Ok(())
     }
 
-    pub fn get_time(&self, domain: &str, token: u128, uuid: Uuid, event_tx: Sender<LoopEvent>) -> Result<(), SendingError> {
+    pub fn get_time(
+        &self,
+        domain: &str,
+        token: u128,
+        uuid: Uuid,
+        event_tx: Sender<LoopEvent>,
+    ) -> Result<(), SendingError> {
         if !self.is_connected() {
             return Err(SendingError::ConnectionError);
         }
