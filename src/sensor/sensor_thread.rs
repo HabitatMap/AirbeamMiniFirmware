@@ -68,6 +68,9 @@ impl SensorDriver {
                 if should_sleep {
                     let _ = uart.write(&CMD_SLEEP);
                     thread::sleep(Duration::from_millis(100));
+                } else {
+                    let _ = uart.write(&CMD_WAKE);
+                    thread::sleep(Duration::from_millis(100));
                 }
             }
 
