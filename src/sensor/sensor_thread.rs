@@ -74,18 +74,10 @@ impl SensorDriver {
                 }
             }
 
+            let mut running = true;
+
             loop {
-                //we wait for stop signal or sleep time to expire
-                match stop_rx.recv_timeout(sleep_time) {
-                    Ok(_) | Err(RecvTimeoutError::Disconnected) => {
-                        info!("Stop signal received. Shutting down...");
-                        break; // Exit the loop
-                    }
-                    Err(RecvTimeoutError::Timeout) => {
-                        // Timeout passed, just continue the loop
-                        info!("Sleep time expired. Continuing...");
-                    }
-                }
+                info!("Sensor Thread: Loop OK");
                 if let Ok(uart) = uart_shared.lock() {
                     let read_byte = || {
                         let mut byte_buf = [0u8; 1];
@@ -113,7 +105,12 @@ impl SensorDriver {
                     let _ = uart.clear_rx();
 
                     //for averaging_time <= 3 seconds, we read in active mode
-                    let measurement = Self::averaging_loop(averaging_time, read_byte, read_command);
+                    let (measurement, is_stopped) = Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx);
+
+                    if is_stopped {
+                        break;
+                    }
+
                     if measurement.is_none() {
                         warn!("No measurement scanned. Continuing...");
                     }
@@ -128,6 +125,7 @@ impl SensorDriver {
                     }
                 }
             }
+            info!("Sensor Thread: Loop stopped.");
             // When loop breaks due to stop command, put sensor to sleep
             if let Ok(uart) = uart_shared.lock() {
                 let _ = uart.write(&CMD_SLEEP);
@@ -141,7 +139,8 @@ impl SensorDriver {
         duration: Duration,
         mut read_byte: F,
         read_command: G,
-    ) -> Option<Measurement>
+        stop: &Receiver<()>
+    ) -> (Option<Measurement>, bool)
     where
         F: FnMut() -> Option<[u8; 1]>,
         G: Fn() -> Option<usize>,
@@ -150,6 +149,7 @@ impl SensorDriver {
         let mut pm2_5_sum = 0_u32;
         let mut count = 0_u32;
         let instant = Instant::now();
+        let mut stopped = false;
 
         while duration > instant.elapsed() {
             read_command(); //TODO: slowdown? current speed 800meas/min
@@ -158,18 +158,22 @@ impl SensorDriver {
                 pm2_5_sum += parsed.pm2_5_avg as u32;
                 count += 1;
             }
+            if stop.try_recv().is_ok() { //break the loop if stop signal is received
+                stopped = true;
+                break;
+            }
         }
-
-        if count > 0 {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok();
+        if count > 0 && timestamp.is_some() {
             let final_pm1 = pm1_0_sum / count;
             let final_pm25 = pm2_5_sum / count;
-            Some(Measurement {
+            (Some(Measurement {
                 pm1_0_avg: final_pm1 as u16,
                 pm2_5_avg: final_pm25 as u16,
-                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as u32,
-            })
+                timestamp: timestamp.unwrap().as_secs() as u32,
+            }), stopped)
         } else {
-            None
+            (None, stopped)
         }
     }
 
