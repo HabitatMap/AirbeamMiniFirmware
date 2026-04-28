@@ -134,6 +134,7 @@ fn main() -> anyhow::Result<()> {
             },
             |ssid, password| wifi_manager.connect(ssid, password),
         )?;
+        info!("BLE setup result: {:?}", result);
 
         let config = if let SetupResult::StartNew(config) = &result {
             nvs_manager.set_session_config(&config)?;
@@ -217,7 +218,7 @@ fn main() -> anyhow::Result<()> {
                 match event {
                     LoopEvent::Measurement(m) => {
                         let notify = on_wifi_error.take();
-
+                        info!("Got measurement: {:?}", m);
                         if send_measurement(m).is_err() {
                             if let Some(f) = notify {
                                 f();
@@ -249,6 +250,7 @@ fn main() -> anyhow::Result<()> {
                         if start_sync {
                             //TODO: wifi sync
                         }
+                        info!("Stopping");
                         let _ = storage.clear_measurements();
                         nvs_manager.clear_session_config();
                         break;
