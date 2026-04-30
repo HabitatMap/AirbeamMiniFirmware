@@ -20,6 +20,7 @@ use std::io::{BufReader, Read};
 use std::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
+const CHUNK_SIZE: usize = 4096;
 const MAGIC: &[u8; 2] = &[0xAB, 0xBA];
 
 pub enum SyncStatus {
@@ -64,7 +65,7 @@ impl WifiManager {
                 let file_size = file.metadata()?.len();
                 let size_str = file_size.to_string();
                 handler_tx.send(SyncStatus::Syncing)?;
-                let mut reader = BufReader::with_capacity(crate::maunal_sync::CHUNK_SIZE, file);
+                let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
 
                 let headers = [
                     ("Content-Type", "application/octet-stream"),
@@ -73,7 +74,7 @@ impl WifiManager {
                 ];
                 let mut response = request.into_response(200, Some("OK"), &headers)?;
 
-                let mut buf = [0u8; crate::maunal_sync::CHUNK_SIZE];
+                let mut buf = [0u8; CHUNK_SIZE];
                 loop {
                     let n = reader.read(&mut buf)?;
                     if n == 0 {
