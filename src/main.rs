@@ -3,13 +3,14 @@ mod autosync;
 mod battery;
 mod ble;
 mod led;
+mod maunal_sync;
 mod sensor;
 mod storage;
 mod wifi;
 
 use crate::autosync::sync_from_storage;
 use crate::battery::BatteryMonitor;
-use crate::ble::ble_protocol::{DeviceResponse, ErrorCode};
+use crate::ble::ble_protocol::{DeviceResponse, DeviceStatus, ErrorCode};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::measurement::Measurement;
@@ -17,7 +18,7 @@ use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
-use crate::wifi::wifi_manager::WifiManager;
+use crate::wifi::wifi_manager::{SyncStatus, WifiManager};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::hal::adc::attenuation::DB_12;
@@ -129,8 +130,8 @@ fn main() -> anyhow::Result<()> {
             || batt.read(&adc, &mut vbat_pin).signed_percent,
             || storage.clear_measurements(),
             || {
-                info!("TODO: sync storage");
-                Ok(())
+                let (sync_status, sync_server) = wifi_manager.manual_sync()?;
+                Ok((sync_status, sync_server))
             },
             |ssid, password| wifi_manager.connect(ssid, password),
         )?;
@@ -248,7 +249,17 @@ fn main() -> anyhow::Result<()> {
                     LoopEvent::Stop { start_sync } => {
                         let _ = stop_tx.send(());
                         if start_sync {
-                            //TODO: wifi sync
+                            let (sync_status, server) = wifi_manager.manual_sync()?;
+                            loop {
+                                match sync_status.recv()? {
+                                    SyncStatus::Ready { password } => {
+                                        let _ = ble
+                                            .notify_status(&DeviceStatus::ReadyToSync { password });
+                                    }
+                                    SyncStatus::Done => break,
+                                    SyncStatus::Syncing => {}
+                                }
+                            }
                         }
                         info!("Stopping");
                         let _ = storage.clear_measurements();

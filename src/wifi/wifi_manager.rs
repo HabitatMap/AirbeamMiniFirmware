@@ -1,21 +1,32 @@
 use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::storage::storage_controller::FILE_PATH;
 use crate::{LoopEvent, SendingError};
 use embedded_svc::http::Method;
 use embedded_svc::io::Write;
+use embedded_svc::wifi::AccessPointConfiguration;
 use embedded_svc::{
     http::client::Client as HttpClient,
     wifi::{AuthMethod, ClientConfiguration, Configuration},
 };
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::http::client::EspHttpConnection;
+use esp_idf_svc::http::server::{Configuration as HttpServerConfig, EspHttpServer};
+use esp_idf_svc::sys::{esp_random, random};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
-use std::sync::mpsc::Sender;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
 const MAGIC: &[u8; 2] = &[0xAB, 0xBA];
 
+pub enum SyncStatus {
+    Ready { password: String },
+    Syncing,
+    Done,
+}
 pub struct WifiManager {
     wifi: Mutex<BlockingWifi<EspWifi<'static>>>,
 }
@@ -27,8 +38,63 @@ impl WifiManager {
         }
     }
 
+    pub fn manual_sync(&self) -> anyhow::Result<(Receiver<SyncStatus>, EspHttpServer)> {
+        if let Some(mut wifi) = self.wifi.try_lock() {
+            let ssid = "AirBeamMini Sync";
+            let n = unsafe { esp_random() } % 100_000_000;
+            let password = format!("{:08}", n);
+            let _ = wifi.stop(); // if already started
+            wifi.set_configuration(&Configuration::AccessPoint(AccessPointConfiguration {
+                ssid: ssid.parse()?,
+                password: password.parse()?,
+                auth_method: AuthMethod::WPA2Personal,
+                max_connections: 1,
+                ..Default::default()
+            }))?;
+            wifi.start()?;
+            wifi.wait_netif_up()?;
+
+            let mut server = EspHttpServer::new(&HttpServerConfig::default())?;
+            let file_path: String = FILE_PATH.to_string();
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let handler_tx = tx.clone();
+            server.fn_handler::<anyhow::Error, _>("/sync", Method::Get, move |request| {
+                let file = File::open(&file_path)?;
+                let file_size = file.metadata()?.len();
+                let size_str = file_size.to_string();
+                handler_tx.send(SyncStatus::Syncing)?;
+                let mut reader = BufReader::with_capacity(crate::maunal_sync::CHUNK_SIZE, file);
+
+                let headers = [
+                    ("Content-Type", "application/octet-stream"),
+                    ("Content-Length", size_str.as_str()),
+                    ("Content-Disposition", "attachment"),
+                ];
+                let mut response = request.into_response(200, Some("OK"), &headers)?;
+
+                let mut buf = [0u8; crate::maunal_sync::CHUNK_SIZE];
+                loop {
+                    let n = reader.read(&mut buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    response.write_all(&buf[..n])?;
+                }
+                response.flush()?;
+                handler_tx.send(SyncStatus::Done)?;
+                Ok(())
+            })?;
+            tx.send(SyncStatus::Ready { password })?;
+            Ok((rx, server))
+        } else {
+            Err(anyhow::Error::msg("Wifi lock fail"))
+        }
+    }
+
     pub fn connect(&self, wifi_ssid: &str, wifi_password: &str) -> anyhow::Result<()> {
         if let Some(mut wifi) = self.wifi.try_lock() {
+            let _ = wifi.stop(); // if already started
             let wifi_config = Configuration::Client(ClientConfiguration {
                 ssid: wifi_ssid.try_into()?,
                 bssid: None,
@@ -83,10 +149,10 @@ impl WifiManager {
             .map_err(|_| SendingError::Retry)?;
         request.flush().map_err(|_| SendingError::Retry)?;
         let mut response = request.submit().map_err(|_| SendingError::Retry)?;
-        let status = response.status();
 
         if let Some(epoch) = response.header("X-Server-Time") {
             if let Ok(epoch) = epoch.parse::<i64>() {
+                info!("Server time: {}", epoch);
                 event_tx.send(LoopEvent::TimeUpdate(epoch)).unwrap();
             }
         }
@@ -167,13 +233,11 @@ impl WifiManager {
         Ok(())
     }
 
-    pub fn disconnect(&self) -> anyhow::Result<(), WifiError> {
+    pub fn disconnect(&mut self) {
         if let Some(mut wifi) = self.wifi.try_lock() {
-            wifi.disconnect().map_err(|_| WifiError::Other)?;
-        } else {
-            return Err(WifiError::LockError);
+            let _ = wifi.disconnect();
+            let _ = wifi.stop();
         }
-        Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
