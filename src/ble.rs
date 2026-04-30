@@ -3,6 +3,7 @@ pub mod ble_protocol;
 use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
 use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::wifi::wifi_manager::SyncStatus;
 use crate::{LoopEvent, SendingError};
 use esp32_nimble::enums::AuthReq;
 use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
@@ -12,8 +13,10 @@ use esp32_nimble::{
     uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
     NotifyTxStatus,
 };
+use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{info, warn};
+use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
@@ -152,7 +155,7 @@ impl BleManager {
     }
 
     /// Run the setup handshake. Blocks the calling thread until a config is obtained.
-    pub fn run_setup<F0, F1, F2, W>(
+    pub fn run_setup<'a, F0, F1, F2, W>(
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
@@ -164,7 +167,7 @@ impl BleManager {
     where
         F0: FnMut() -> i8,
         F1: Fn() -> anyhow::Result<()>,
-        F2: Fn() -> anyhow::Result<()>,
+        F2: Fn() -> anyhow::Result<(Receiver<SyncStatus>, EspHttpServer<'a>)>,
         W: Fn(&str, &str) -> anyhow::Result<()>,
     {
         //reconnect wifi on fixed session after timeout
@@ -234,7 +237,15 @@ impl BleManager {
                 AppCommand::StartSync => {
                     self.send_response(DeviceResponse::Ack)?;
                     match sync_storage() {
-                        Ok(()) => self.send_response(DeviceResponse::Ready)?,
+                        Ok((status, server)) => loop {
+                            match status.recv()? {
+                                SyncStatus::Ready { password } => {
+                                    self.notify_status(&DeviceStatus::ReadyToSync { password })?
+                                }
+                                SyncStatus::Done => break,
+                                SyncStatus::Syncing => {}
+                            }
+                        },
                         Err(e) => {
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }

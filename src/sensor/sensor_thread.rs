@@ -105,7 +105,8 @@ impl SensorDriver {
                     let _ = uart.clear_rx();
 
                     //for averaging_time <= 3 seconds, we read in active mode
-                    let (measurement, is_stopped) = Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx);
+                    let (measurement, is_stopped) =
+                        Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx);
 
                     if is_stopped {
                         break;
@@ -139,7 +140,7 @@ impl SensorDriver {
         duration: Duration,
         mut read_byte: F,
         read_command: G,
-        stop: &Receiver<()>
+        stop: &Receiver<()>,
     ) -> (Option<Measurement>, bool)
     where
         F: FnMut() -> Option<[u8; 1]>,
@@ -158,7 +159,8 @@ impl SensorDriver {
                 pm2_5_sum += parsed.pm2_5_avg as u32;
                 count += 1;
             }
-            if stop.try_recv().is_ok() { //break the loop if stop signal is received
+            if stop.try_recv().is_ok() {
+                //break the loop if stop signal is received
                 stopped = true;
                 break;
             }
@@ -167,11 +169,14 @@ impl SensorDriver {
         if count > 0 && timestamp.is_some() {
             let final_pm1 = pm1_0_sum / count;
             let final_pm25 = pm2_5_sum / count;
-            (Some(Measurement {
-                pm1_0_avg: final_pm1 as u16,
-                pm2_5_avg: final_pm25 as u16,
-                timestamp: timestamp.unwrap().as_secs() as u32,
-            }), stopped)
+            (
+                Some(Measurement {
+                    pm1_0_avg: final_pm1 as u16,
+                    pm2_5_avg: final_pm25 as u16,
+                    timestamp: timestamp.unwrap().as_secs() as u32,
+                }),
+                stopped,
+            )
         } else {
             (None, stopped)
         }

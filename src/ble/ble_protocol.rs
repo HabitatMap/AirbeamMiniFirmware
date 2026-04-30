@@ -129,6 +129,9 @@ pub enum DeviceStatus {
         battery_level: i8,
         session: Uuid,
     },
+    ReadyToSync {
+        password: String,
+    },
 }
 
 impl DeviceStatus {
@@ -158,6 +161,12 @@ impl DeviceStatus {
                 buf[1] = *battery_level as u8;
                 buf[2..18].copy_from_slice(&session.to_bytes_le());
                 18
+            }
+            Self::ReadyToSync { password } => {
+                buf[0] = 0x03;
+                let password_bytes = password.as_bytes();
+                buf[1..1 + password_bytes.len()].copy_from_slice(password_bytes);
+                1 + password_bytes.len()
             }
         }
     }
