@@ -3,7 +3,6 @@ mod autosync;
 mod battery;
 mod ble;
 mod led;
-mod maunal_sync;
 mod sensor;
 mod storage;
 mod wifi;
