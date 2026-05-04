@@ -12,9 +12,10 @@ use embedded_svc::{
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::http::client::EspHttpConnection;
 use esp_idf_svc::sys::{
-    esp_err_t, esp_random, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
-    httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
-    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK,
+    esp_err_t, esp_get_free_heap_size, esp_random, http_method_HTTP_GET, httpd_config_t,
+    httpd_handle_t, httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk,
+    httpd_resp_set_hdr, httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL,
+    ESP_OK,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
@@ -80,10 +81,12 @@ impl WifiManager {
             let ssid = "AirBeamMini Sync";
             let n = unsafe { esp_random() } % 100_000_000;
             let password = format!("{:08}", n);
+            info!("manual_sync: stop prior wifi");
             let _ = wifi.stop(); // if already started
             // Channel 1 is dense in real-world scans (23+ APs observed); pin
             // SoftAP to 11 to dodge the congestion that was retransmitting /sync
             // chunks until the phone TCP gave up at ~14s.
+            info!("manual_sync: set AP config");
             wifi.set_configuration(&Configuration::AccessPoint(AccessPointConfiguration {
                 ssid: ssid.parse()?,
                 password: password.parse()?,
@@ -92,8 +95,14 @@ impl WifiManager {
                 max_connections: 1,
                 ..Default::default()
             }))?;
+            info!("manual_sync: wifi.start()");
             wifi.start()?;
+            info!("manual_sync: wait_netif_up()");
             wifi.wait_netif_up()?;
+            info!(
+                "manual_sync: free heap before httpd_start = {}",
+                unsafe { esp_get_free_heap_size() }
+            );
 
             let (tx, rx) = std::sync::mpsc::channel();
             let ctx = Box::into_raw(Box::new(SyncHandlerCtx {
@@ -122,8 +131,15 @@ impl WifiManager {
             };
 
             let mut handle: httpd_handle_t = ptr::null_mut();
+            info!("manual_sync: httpd_start (stack={})", config.stack_size);
             let start_res = unsafe { httpd_start(&mut handle, &config) };
+            info!("manual_sync: httpd_start ret={}", start_res);
             if start_res != ESP_OK {
+                error!(
+                    "manual_sync: httpd_start FAILED: {} (free heap now {})",
+                    start_res,
+                    unsafe { esp_get_free_heap_size() }
+                );
                 unsafe { drop(Box::from_raw(ctx)) };
                 return Err(anyhow::Error::msg(format!(
                     "httpd_start failed: {}",
@@ -138,8 +154,11 @@ impl WifiManager {
                 handler: Some(sync_get_handler),
                 user_ctx: ctx as *mut c_void,
             };
+            info!("manual_sync: register_uri_handler");
             let reg_res = unsafe { httpd_register_uri_handler(handle, &uri_handler) };
+            info!("manual_sync: register_uri_handler ret={}", reg_res);
             if reg_res != ESP_OK {
+                error!("manual_sync: register_uri_handler FAILED: {}", reg_res);
                 unsafe {
                     let _ = httpd_stop(handle);
                     drop(Box::from_raw(ctx));
@@ -149,6 +168,10 @@ impl WifiManager {
                     reg_res
                 )));
             }
+            info!(
+                "manual_sync: ready, free heap after httpd_start = {}",
+                unsafe { esp_get_free_heap_size() }
+            );
 
             tx.send(SyncStatus::Ready { password })?;
             *self.sync_server.lock() = Some(SyncServer { handle, ctx });

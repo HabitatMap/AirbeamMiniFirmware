@@ -14,7 +14,7 @@ use esp32_nimble::{
     NotifyTxStatus,
 };
 use esp_idf_svc::sys::{settimeofday, timeval};
-use log::{info, warn};
+use log::{error, info, warn};
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -253,6 +253,7 @@ impl BleManager {
                             let _ = self.send_response(DeviceResponse::Ready);
                         }
                         Err(e) => {
+                            error!("start_sync failed: {:?}", e);
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }
                     }
