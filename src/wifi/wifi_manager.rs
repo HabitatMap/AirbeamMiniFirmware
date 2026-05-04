@@ -30,16 +30,20 @@ pub enum SyncStatus {
 }
 pub struct WifiManager {
     wifi: Mutex<BlockingWifi<EspWifi<'static>>>,
+    sync_server: Mutex<Option<EspHttpServer<'static>>>,
 }
 
 impl WifiManager {
     pub fn new(wifi: BlockingWifi<EspWifi<'static>>) -> Self {
         Self {
             wifi: Mutex::new(wifi),
+            sync_server: Mutex::new(None),
         }
     }
 
-    pub fn manual_sync(&self) -> anyhow::Result<(Receiver<SyncStatus>, EspHttpServer)> {
+    /// Server is parked on `WifiManager` so it outlives BLE disconnects;
+    /// caller must invoke [`Self::cancel_manual_sync`] when done.
+    pub fn manual_sync(&self) -> anyhow::Result<Receiver<SyncStatus>> {
         if let Some(mut wifi) = self.wifi.try_lock() {
             let ssid = "AirBeamMini Sync";
             let n = unsafe { esp_random() } % 100_000_000;
@@ -87,9 +91,18 @@ impl WifiManager {
                 Ok(())
             })?;
             tx.send(SyncStatus::Ready { password })?;
-            Ok((rx, server))
+            *self.sync_server.lock() = Some(server);
+            Ok(rx)
         } else {
             Err(anyhow::Error::msg("Wifi lock fail"))
+        }
+    }
+
+    pub fn cancel_manual_sync(&self) {
+        let server = self.sync_server.lock().take();
+        drop(server);
+        if let Some(mut wifi) = self.wifi.try_lock() {
+            let _ = wifi.stop();
         }
     }
 
