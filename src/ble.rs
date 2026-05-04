@@ -13,7 +13,6 @@ use esp32_nimble::{
     uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
     NotifyTxStatus,
 };
-use esp_idf_svc::http::server::EspHttpServer;
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{info, warn};
 use std::sync::mpsc::Receiver;
@@ -155,19 +154,21 @@ impl BleManager {
     }
 
     /// Run the setup handshake. Blocks the calling thread until a config is obtained.
-    pub fn run_setup<'a, F0, F1, F2, W>(
+    pub fn run_setup<F0, F1, F2, F3, W>(
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
         mut battery_level: F0,
         clear_storage: F1,
-        sync_storage: F2,
+        start_sync: F2,
+        stop_sync: F3,
         connect_to_wifi: W,
     ) -> anyhow::Result<SetupResult>
     where
         F0: FnMut() -> i8,
         F1: Fn() -> anyhow::Result<()>,
-        F2: Fn() -> anyhow::Result<(Receiver<SyncStatus>, EspHttpServer<'a>)>,
+        F2: Fn() -> anyhow::Result<Receiver<SyncStatus>>,
+        F3: Fn(),
         W: Fn(&str, &str) -> anyhow::Result<()>,
     {
         //reconnect wifi on fixed session after timeout
@@ -236,16 +237,21 @@ impl BleManager {
 
                 AppCommand::StartSync => {
                     self.send_response(DeviceResponse::Ack)?;
-                    match sync_storage() {
-                        Ok((status, server)) => loop {
-                            match status.recv()? {
-                                SyncStatus::Ready { password } => {
-                                    self.notify_status(&DeviceStatus::ReadyToSync { password })?
+                    match start_sync() {
+                        Ok(status) => {
+                            // Server is owned by WifiManager so BLE drops here do not
+                            // tear it down — the in-flight /sync TCP stream survives.
+                            loop {
+                                match status.recv()? {
+                                    SyncStatus::Ready { password } => self
+                                        .notify_status(&DeviceStatus::ReadyToSync { password })?,
+                                    SyncStatus::Done => break,
+                                    SyncStatus::Syncing => {}
                                 }
-                                SyncStatus::Done => break,
-                                SyncStatus::Syncing => {}
                             }
-                        },
+                            stop_sync();
+                            let _ = self.send_response(DeviceResponse::Ready);
+                        }
                         Err(e) => {
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }
