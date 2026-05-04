@@ -12,10 +12,11 @@ use embedded_svc::{
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::http::client::EspHttpConnection;
 use esp_idf_svc::sys::{
-    esp_err_t, esp_get_free_heap_size, esp_random, http_method_HTTP_GET, httpd_config_t,
-    httpd_handle_t, httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk,
-    httpd_resp_set_hdr, httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL,
-    ESP_OK,
+    esp_err_t, esp_get_free_heap_size, esp_get_minimum_free_heap_size, esp_random,
+    heap_caps_get_largest_free_block, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
+    httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
+    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK,
+    MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
@@ -99,10 +100,7 @@ impl WifiManager {
             wifi.start()?;
             info!("manual_sync: wait_netif_up()");
             wifi.wait_netif_up()?;
-            info!(
-                "manual_sync: free heap before httpd_start = {}",
-                unsafe { esp_get_free_heap_size() }
-            );
+            log_heap("before httpd_start");
 
             let (tx, rx) = std::sync::mpsc::channel();
             let ctx = Box::into_raw(Box::new(SyncHandlerCtx {
@@ -110,12 +108,14 @@ impl WifiManager {
                 tx: tx.clone(),
             }));
 
-            // 6144B blew up with a stack-protection fault inside ESP-IDF's
-            // memset during /sync (SP underran by ~44B). 16 KiB gives the
-            // handler real headroom for std::fs + httpd internals.
+            // 6144B previously panicked because the GET handler had a 4 KiB
+            // on-stack chunk buffer (now heap-allocated). Internal DRAM gets
+            // fragmented once BLE + Wi-Fi are running, so 16 KiB couldn't
+            // find a contiguous block (xTaskCreate -> ESP_ERR_HTTPD_TASK).
+            // 8 KiB still leaves comfortable headroom for the trimmed handler.
             let config = httpd_config_t {
                 task_priority: 5,
-                stack_size: 16384,
+                stack_size: 8192,
                 core_id: i32::MAX as c_int,
                 task_caps: 0,
                 server_port: 80,
@@ -135,11 +135,8 @@ impl WifiManager {
             let start_res = unsafe { httpd_start(&mut handle, &config) };
             info!("manual_sync: httpd_start ret={}", start_res);
             if start_res != ESP_OK {
-                error!(
-                    "manual_sync: httpd_start FAILED: {} (free heap now {})",
-                    start_res,
-                    unsafe { esp_get_free_heap_size() }
-                );
+                error!("manual_sync: httpd_start FAILED: {}", start_res);
+                log_heap("after httpd_start failure");
                 unsafe { drop(Box::from_raw(ctx)) };
                 return Err(anyhow::Error::msg(format!(
                     "httpd_start failed: {}",
@@ -168,10 +165,7 @@ impl WifiManager {
                     reg_res
                 )));
             }
-            info!(
-                "manual_sync: ready, free heap after httpd_start = {}",
-                unsafe { esp_get_free_heap_size() }
-            );
+            log_heap("after httpd_start success");
 
             tx.send(SyncStatus::Ready { password })?;
             *self.sync_server.lock() = Some(SyncServer { handle, ctx });
@@ -384,6 +378,20 @@ pub enum WifiError {
     NotStarted,
     LockError,
     Other,
+}
+
+fn log_heap(tag: &str) {
+    let (free, min_free, largest_internal) = unsafe {
+        (
+            esp_get_free_heap_size(),
+            esp_get_minimum_free_heap_size(),
+            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+        )
+    };
+    info!(
+        "heap[{}]: free={} min_free={} largest_internal_8bit={}",
+        tag, free, min_free, largest_internal
+    );
 }
 
 extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
