@@ -128,10 +128,8 @@ fn main() -> anyhow::Result<()> {
             storage.has_measurements(),
             || batt.read(&adc, &mut vbat_pin).signed_percent,
             || storage.clear_measurements(),
-            || {
-                let (sync_status, sync_server) = wifi_manager.manual_sync()?;
-                Ok((sync_status, sync_server))
-            },
+            || wifi_manager.manual_sync(),
+            || wifi_manager.cancel_manual_sync(),
             |ssid, password| wifi_manager.connect(ssid, password),
         )?;
         info!("BLE setup result: {:?}", result);
@@ -248,7 +246,7 @@ fn main() -> anyhow::Result<()> {
                     LoopEvent::Stop { start_sync } => {
                         let _ = stop_tx.send(());
                         if start_sync {
-                            let (sync_status, server) = wifi_manager.manual_sync()?;
+                            let sync_status = wifi_manager.manual_sync()?;
                             loop {
                                 match sync_status.recv()? {
                                     SyncStatus::Ready { password } => {
@@ -258,6 +256,10 @@ fn main() -> anyhow::Result<()> {
                                     SyncStatus::Done => break,
                                     SyncStatus::Syncing => {}
                                 }
+                            }
+                            wifi_manager.cancel_manual_sync();
+                            if ble.is_connected() {
+                                let _ = ble.send_response(DeviceResponse::Ready);
                             }
                         }
                         info!("Stopping");
