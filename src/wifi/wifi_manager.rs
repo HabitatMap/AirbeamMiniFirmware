@@ -15,7 +15,6 @@ use esp_idf_svc::sys::{
     esp_err_t, esp_random, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
     httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
     httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK,
-    MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
@@ -102,11 +101,14 @@ impl WifiManager {
                 tx: tx.clone(),
             }));
 
+            // 6144B blew up with a stack-protection fault inside ESP-IDF's
+            // memset during /sync (SP underran by ~44B). 16 KiB gives the
+            // handler real headroom for std::fs + httpd internals.
             let config = httpd_config_t {
                 task_priority: 5,
-                stack_size: 6144,
+                stack_size: 16384,
                 core_id: i32::MAX as c_int,
-                task_caps: MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT,
+                task_caps: 0,
                 server_port: 80,
                 ctrl_port: 32768,
                 max_open_sockets: 4,
@@ -422,7 +424,9 @@ extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
     }
 
     let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
-    let mut buf = [0u8; CHUNK_SIZE];
+    // Heap-allocate the chunk buffer — a 4 KiB stack array on top of httpd's
+    // internal frames was overflowing the task stack.
+    let mut buf = vec![0u8; CHUNK_SIZE];
     let mut sent_total: u64 = 0;
     let mut chunk_idx: u32 = 0;
     loop {
