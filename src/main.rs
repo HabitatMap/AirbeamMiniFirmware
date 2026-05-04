@@ -36,7 +36,7 @@ use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
+use esp_idf_svc::hal::adc::Resolution;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -83,8 +83,8 @@ fn main() -> anyhow::Result<()> {
     let adc = AdcDriver::new(peripherals.adc1)?;
     let adc_config = AdcChannelConfig {
         attenuation: DB_12,
-        calibration: Calibration::None,
-        ..Default::default()
+        calibration: Calibration::Curve,
+        resolution: Resolution::Resolution12Bit
     };
     let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &adc_config)?;
 
@@ -212,6 +212,13 @@ fn main() -> anyhow::Result<()> {
             None
         };
 
+        let time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+        for i in 0..20 {
+            let measurement = Measurement::new(i*2, i+2, (time - (60 * i as i64)) as u32);
+            storage.save_measurement(measurement.clone());
+        }
+
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
             if let Ok(event) = event {
@@ -268,7 +275,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            if storage.has_measurements() && connected() {
+            if storage.has_measurements() && connected() && false {
                 if let Err(e) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
                     error!("Failed to sync");
                 }
