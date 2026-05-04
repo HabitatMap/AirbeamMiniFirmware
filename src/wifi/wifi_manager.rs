@@ -11,26 +11,55 @@ use embedded_svc::{
 };
 use esp32_nimble::utilities::mutex::Mutex;
 use esp_idf_svc::http::client::EspHttpConnection;
-use esp_idf_svc::http::server::{Configuration as HttpServerConfig, EspHttpServer};
-use esp_idf_svc::sys::{esp_random, random};
+use esp_idf_svc::sys::{
+    esp_err_t, esp_random, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
+    httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
+    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK,
+    MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
+};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
+use std::ffi::{c_int, c_void, CString};
 use std::fs::File;
 use std::io::{BufReader, Read};
+use std::ptr;
 use std::sync::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 4096;
 const MAGIC: &[u8; 2] = &[0xAB, 0xBA];
+// Default 5s send_wait_timeout trips when the phone reads the body slowly under
+// BLE/Wi-Fi coex. 30s eats real-world stalls.
+const HTTPD_TIMEOUT_SECS: u16 = 30;
 
 pub enum SyncStatus {
     Ready { password: String },
     Syncing,
     Done,
 }
+
+struct SyncHandlerCtx {
+    file_path: CString,
+    tx: Sender<SyncStatus>,
+}
+
+struct SyncServer {
+    handle: httpd_handle_t,
+    ctx: *mut SyncHandlerCtx,
+}
+
+impl Drop for SyncServer {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = httpd_stop(self.handle);
+            drop(Box::from_raw(self.ctx));
+        }
+    }
+}
+
 pub struct WifiManager {
     wifi: Mutex<BlockingWifi<EspWifi<'static>>>,
-    sync_server: Mutex<Option<EspHttpServer<'static>>>,
+    sync_server: Mutex<Option<SyncServer>>,
 }
 
 impl WifiManager {
@@ -43,6 +72,10 @@ impl WifiManager {
 
     /// Server is parked on `WifiManager` so it outlives BLE disconnects;
     /// caller must invoke [`Self::cancel_manual_sync`] when done.
+    ///
+    /// Uses the raw esp-idf httpd FFI so the recv/send wait timeouts can be
+    /// bumped from the crate-hardcoded 5s — `esp-idf-svc::http::server::Configuration`
+    /// does not expose those fields.
     pub fn manual_sync(&self) -> anyhow::Result<Receiver<SyncStatus>> {
         if let Some(mut wifi) = self.wifi.try_lock() {
             let ssid = "AirBeamMini Sync";
@@ -59,39 +92,60 @@ impl WifiManager {
             wifi.start()?;
             wifi.wait_netif_up()?;
 
-            let mut server = EspHttpServer::new(&HttpServerConfig::default())?;
-            let file_path: String = FILE_PATH.to_string();
-
             let (tx, rx) = std::sync::mpsc::channel();
-            let handler_tx = tx.clone();
-            server.fn_handler::<anyhow::Error, _>("/sync", Method::Get, move |request| {
-                let file = File::open(&file_path)?;
-                let file_size = file.metadata()?.len();
-                let size_str = file_size.to_string();
-                handler_tx.send(SyncStatus::Syncing)?;
-                let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
+            let ctx = Box::into_raw(Box::new(SyncHandlerCtx {
+                file_path: CString::new(FILE_PATH)?,
+                tx: tx.clone(),
+            }));
 
-                let headers = [
-                    ("Content-Type", "application/octet-stream"),
-                    ("Content-Length", size_str.as_str()),
-                    ("Content-Disposition", "attachment"),
-                ];
-                let mut response = request.into_response(200, Some("OK"), &headers)?;
+            let config = httpd_config_t {
+                task_priority: 5,
+                stack_size: 6144,
+                core_id: i32::MAX as c_int,
+                task_caps: MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT,
+                server_port: 80,
+                ctrl_port: 32768,
+                max_open_sockets: 4,
+                max_uri_handlers: 4,
+                max_resp_headers: 8,
+                backlog_conn: 5,
+                lru_purge_enable: true,
+                recv_wait_timeout: HTTPD_TIMEOUT_SECS,
+                send_wait_timeout: HTTPD_TIMEOUT_SECS,
+                ..Default::default()
+            };
 
-                let mut buf = [0u8; CHUNK_SIZE];
-                loop {
-                    let n = reader.read(&mut buf)?;
-                    if n == 0 {
-                        break;
-                    }
-                    response.write_all(&buf[..n])?;
+            let mut handle: httpd_handle_t = ptr::null_mut();
+            let start_res = unsafe { httpd_start(&mut handle, &config) };
+            if start_res != ESP_OK {
+                unsafe { drop(Box::from_raw(ctx)) };
+                return Err(anyhow::Error::msg(format!(
+                    "httpd_start failed: {}",
+                    start_res
+                )));
+            }
+
+            let uri = c"/sync";
+            let uri_handler = httpd_uri_t {
+                uri: uri.as_ptr(),
+                method: http_method_HTTP_GET,
+                handler: Some(sync_get_handler),
+                user_ctx: ctx as *mut c_void,
+            };
+            let reg_res = unsafe { httpd_register_uri_handler(handle, &uri_handler) };
+            if reg_res != ESP_OK {
+                unsafe {
+                    let _ = httpd_stop(handle);
+                    drop(Box::from_raw(ctx));
                 }
-                response.flush()?;
-                handler_tx.send(SyncStatus::Done)?;
-                Ok(())
-            })?;
+                return Err(anyhow::Error::msg(format!(
+                    "httpd_register_uri_handler failed: {}",
+                    reg_res
+                )));
+            }
+
             tx.send(SyncStatus::Ready { password })?;
-            *self.sync_server.lock() = Some(server);
+            *self.sync_server.lock() = Some(SyncServer { handle, ctx });
             Ok(rx)
         } else {
             Err(anyhow::Error::msg("Wifi lock fail"))
@@ -99,8 +153,8 @@ impl WifiManager {
     }
 
     pub fn cancel_manual_sync(&self) {
-        let server = self.sync_server.lock().take();
-        drop(server);
+        // Drop runs httpd_stop and frees the handler ctx box.
+        drop(self.sync_server.lock().take());
         if let Some(mut wifi) = self.wifi.try_lock() {
             let _ = wifi.stop();
         }
@@ -301,4 +355,77 @@ pub enum WifiError {
     NotStarted,
     LockError,
     Other,
+}
+
+extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
+    let ctx_ptr = unsafe { (*req).user_ctx as *const SyncHandlerCtx };
+    if ctx_ptr.is_null() {
+        return ESP_FAIL;
+    }
+    let ctx = unsafe { &*ctx_ptr };
+
+    let path = match ctx.file_path.to_str() {
+        Ok(p) => p,
+        Err(_) => return ESP_FAIL,
+    };
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("manual_sync: file open failed: {:?}", e);
+            return ESP_FAIL;
+        }
+    };
+    let file_size = match file.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => return ESP_FAIL,
+    };
+    let size_str = match CString::new(file_size.to_string()) {
+        Ok(s) => s,
+        Err(_) => return ESP_FAIL,
+    };
+
+    // Receiver may be gone (notify_status failure post-BLE-drop); must not
+    // abort the GET handler before the body goes out.
+    let _ = ctx.tx.send(SyncStatus::Syncing);
+
+    unsafe {
+        if httpd_resp_set_type(req, c"application/octet-stream".as_ptr()) != ESP_OK {
+            return ESP_FAIL;
+        }
+        if httpd_resp_set_hdr(req, c"Content-Length".as_ptr(), size_str.as_ptr()) != ESP_OK {
+            return ESP_FAIL;
+        }
+        if httpd_resp_set_hdr(
+            req,
+            c"Content-Disposition".as_ptr(),
+            c"attachment".as_ptr(),
+        ) != ESP_OK
+        {
+            return ESP_FAIL;
+        }
+    }
+
+    let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
+    let mut buf = [0u8; CHUNK_SIZE];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) => {
+                error!("manual_sync: read err: {:?}", e);
+                return ESP_FAIL;
+            }
+        };
+        let res = unsafe { httpd_resp_send_chunk(req, buf.as_ptr() as *const _, n as isize) };
+        if res != ESP_OK {
+            error!("manual_sync: send_chunk err: {}", res);
+            return res;
+        }
+    }
+    let res = unsafe { httpd_resp_send_chunk(req, ptr::null(), 0) };
+    if res != ESP_OK {
+        return res;
+    }
+    let _ = ctx.tx.send(SyncStatus::Done);
+    ESP_OK
 }
