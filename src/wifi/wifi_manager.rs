@@ -109,15 +109,16 @@ impl WifiManager {
             }));
 
             // 6144B previously panicked because the GET handler had a 4 KiB
-            // on-stack chunk buffer (now heap-allocated). Internal DRAM gets
-            // fragmented once BLE + Wi-Fi are running, so 16 KiB couldn't
-            // find a contiguous block (xTaskCreate -> ESP_ERR_HTTPD_TASK).
-            // 8 KiB still leaves comfortable headroom for the trimmed handler.
+            // on-stack chunk buffer (now heap-allocated). 8 KiB leaves
+            // comfortable headroom for the trimmed handler. task_caps of 0
+            // means xTaskCreatePinnedToCoreWithCaps finds no matching region
+            // and returns null -> ESP_ERR_HTTPD_TASK; pass the same caps that
+            // esp-idf-svc's safe wrapper uses.
             let config = httpd_config_t {
                 task_priority: 5,
                 stack_size: 8192,
                 core_id: i32::MAX as c_int,
-                task_caps: 0,
+                task_caps: MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT,
                 server_port: 80,
                 ctrl_port: 32768,
                 max_open_sockets: 4,
