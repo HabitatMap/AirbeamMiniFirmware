@@ -82,10 +82,14 @@ impl WifiManager {
             let n = unsafe { esp_random() } % 100_000_000;
             let password = format!("{:08}", n);
             let _ = wifi.stop(); // if already started
+            // Channel 1 is dense in real-world scans (23+ APs observed); pin
+            // SoftAP to 11 to dodge the congestion that was retransmitting /sync
+            // chunks until the phone TCP gave up at ~14s.
             wifi.set_configuration(&Configuration::AccessPoint(AccessPointConfiguration {
                 ssid: ssid.parse()?,
                 password: password.parse()?,
                 auth_method: AuthMethod::WPA2Personal,
+                channel: 11,
                 max_connections: 1,
                 ..Default::default()
             }))?;
@@ -358,27 +362,36 @@ pub enum WifiError {
 }
 
 extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
+    info!("sync_get: entered, opening file");
     let ctx_ptr = unsafe { (*req).user_ctx as *const SyncHandlerCtx };
     if ctx_ptr.is_null() {
+        error!("sync_get: null user_ctx");
         return ESP_FAIL;
     }
     let ctx = unsafe { &*ctx_ptr };
 
     let path = match ctx.file_path.to_str() {
         Ok(p) => p,
-        Err(_) => return ESP_FAIL,
+        Err(_) => {
+            error!("sync_get: file_path not utf8");
+            return ESP_FAIL;
+        }
     };
     let file = match File::open(path) {
         Ok(f) => f,
         Err(e) => {
-            error!("manual_sync: file open failed: {:?}", e);
+            error!("sync_get: file open failed: {:?}", e);
             return ESP_FAIL;
         }
     };
     let file_size = match file.metadata() {
         Ok(m) => m.len(),
-        Err(_) => return ESP_FAIL,
+        Err(e) => {
+            error!("sync_get: metadata failed: {:?}", e);
+            return ESP_FAIL;
+        }
     };
+    info!("sync_get: file_size = {}", file_size);
     let size_str = match CString::new(file_size.to_string()) {
         Ok(s) => s,
         Err(_) => return ESP_FAIL,
@@ -390,9 +403,11 @@ extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
 
     unsafe {
         if httpd_resp_set_type(req, c"application/octet-stream".as_ptr()) != ESP_OK {
+            error!("sync_get: set_type failed");
             return ESP_FAIL;
         }
         if httpd_resp_set_hdr(req, c"Content-Length".as_ptr(), size_str.as_ptr()) != ESP_OK {
+            error!("sync_get: set_hdr Content-Length failed");
             return ESP_FAIL;
         }
         if httpd_resp_set_hdr(
@@ -401,31 +416,48 @@ extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
             c"attachment".as_ptr(),
         ) != ESP_OK
         {
+            error!("sync_get: set_hdr Content-Disposition failed");
             return ESP_FAIL;
         }
     }
 
     let mut reader = BufReader::with_capacity(CHUNK_SIZE, file);
     let mut buf = [0u8; CHUNK_SIZE];
+    let mut sent_total: u64 = 0;
+    let mut chunk_idx: u32 = 0;
     loop {
         let n = match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) => {
-                error!("manual_sync: read err: {:?}", e);
+                error!("sync_get: read err: {:?}", e);
                 return ESP_FAIL;
             }
         };
+        info!(
+            "sync_get: sending chunk #{} n={} sent_so_far={}",
+            chunk_idx, n, sent_total
+        );
         let res = unsafe { httpd_resp_send_chunk(req, buf.as_ptr() as *const _, n as isize) };
         if res != ESP_OK {
-            error!("manual_sync: send_chunk err: {}", res);
+            error!(
+                "sync_get: send_chunk err: {} at chunk #{} sent_so_far={}",
+                res, chunk_idx, sent_total
+            );
             return res;
         }
+        sent_total += n as u64;
+        chunk_idx += 1;
     }
     let res = unsafe { httpd_resp_send_chunk(req, ptr::null(), 0) };
     if res != ESP_OK {
+        error!("sync_get: terminator send_chunk err: {}", res);
         return res;
     }
+    info!(
+        "sync_get: end-of-stream sent, returning OK ({} bytes in {} chunks)",
+        sent_total, chunk_idx
+    );
     let _ = ctx.tx.send(SyncStatus::Done);
     ESP_OK
 }
