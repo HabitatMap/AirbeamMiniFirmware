@@ -3,6 +3,8 @@ use esp_idf_svc::hal::adc::{AdcChannel, ADC1, ADCU1};
 use esp_idf_svc::hal::gpio::{Gpio3, Gpio4, Input, PinDriver, Pull};
 use std::borrow::Borrow;
 use std::time::Instant;
+use log::info;
+
 // Divider ratio: V_bat = V_pin * 1499 / 1000  (e.g. 499kΩ top + 1000kΩ bottom)
 const DIVIDER_RATIO_NUM: u32 = 1499;
 const DIVIDER_RATIO_DEN: u32 = 1000;
@@ -20,19 +22,25 @@ pub struct BatteryState {
 
 pub struct BatteryMonitor<'a> {
     usb_pin: PinDriver<'a, Input>,
+    history: [u32; 5],          // last 5 voltages, mV
+    history_idx: usize,
+    history_filled: usize,      // 0..=5
 }
 
 impl<'a> BatteryMonitor<'a> {
     pub fn new(usb_gpio: esp_idf_svc::hal::gpio::Gpio4<'a>) -> anyhow::Result<Self> {
         Ok(Self {
             usb_pin: PinDriver::input(usb_gpio, Pull::Floating)?,
+            history: [0; 5],
+            history_idx: 0,
+            history_filled: 0,
         })
     }
 
     /// Burst-sample for 20ms, return battery state.
     /// ADC driver and channel live in main — we just borrow them here.
     pub fn read(
-        &self,
+        &mut self,
         adc: &AdcDriver<'a, ADCU1>,
         // We replace `Gpio3` and the exact Borrow type with `impl` constraints
         pin: &mut AdcChannelDriver<
@@ -65,11 +73,21 @@ impl<'a> BatteryMonitor<'a> {
         let voltage_mv = avg_adc_mv * DIVIDER_RATIO_NUM / DIVIDER_RATIO_DEN;
         let usb = self.usb_pin.is_high();
 
-        let signed = match Self::map_percent(voltage_mv) {
+        self.history[self.history_idx] = voltage_mv;
+        self.history_idx = (self.history_idx + 1) % self.history.len();
+        self.history_filled = self.history_filled.saturating_add(1).min(self.history.len());
+
+        let mut buf = self.history[..self.history_filled].to_vec();
+        buf.sort_unstable();
+        let filtered_mv = buf[buf.len() / 2];
+
+        let signed = match Self::map_percent(filtered_mv) {
             Some(p) if usb => p as i8,
             Some(p) => -(p as i8),
             None => 0i8,
         };
+
+        info!("Battery: {}% ({}mV)", signed, filtered_mv);
 
         BatteryState {
             signed_percent: signed,
@@ -81,7 +99,7 @@ impl<'a> BatteryMonitor<'a> {
         if mv < VBAT_EMPTY_MV {
             return Some(1);
         }
-        if mv > VBAT_FULL_MV + 200 {
+        if mv > VBAT_FULL_MV + 300 {
             return None;
         }
         let clamped = mv.min(VBAT_FULL_MV);

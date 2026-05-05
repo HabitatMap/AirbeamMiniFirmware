@@ -30,12 +30,13 @@ use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::sys::{settimeofday, timeval};
+use esp_idf_svc::sys::{esp_pm_configure, settimeofday, timeval};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use esp_idf_svc::hal::adc::Resolution;
 use uuid::Uuid;
 
 fn main() -> anyhow::Result<()> {
@@ -83,13 +84,13 @@ fn main() -> anyhow::Result<()> {
     let adc = AdcDriver::new(peripherals.adc1)?;
     let adc_config = AdcChannelConfig {
         attenuation: DB_12,
-        calibration: Calibration::None,
-        ..Default::default()
+        calibration: Calibration::Curve,
+        resolution: Resolution::Resolution12Bit
     };
     let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &adc_config)?;
 
     // Battery monitor owns the USB sense pin
-    let batt = BatteryMonitor::new(peripherals.pins.gpio4)?;
+    let mut batt = BatteryMonitor::new(peripherals.pins.gpio4)?;
 
     let config = UartConfig::new()
         .baudrate(Hertz(9600))
