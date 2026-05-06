@@ -30,7 +30,7 @@ use esp_idf_svc::hal::uart::{UartConfig, UartDriver};
 use esp_idf_svc::hal::units::Hertz;
 use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::sys::{esp_pm_configure, settimeofday, timeval};
+use esp_idf_svc::sys::{esp, esp_pm_config_t, esp_pm_configure, settimeofday, timeval};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info, warn};
 use std::sync::mpsc;
@@ -116,6 +116,17 @@ fn main() -> anyhow::Result<()> {
     let esp_wifi = EspWifi::new(peripherals.modem.split().0, sys_loop.clone(), Some(nvs))?;
     let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
     let wifi_manager = WifiManager::new(blocking);
+
+    unsafe {
+        let pm = esp_pm_config_t {
+            max_freq_mhz: 160,
+            min_freq_mhz: 40,
+            light_sleep_enable: true,
+        };
+        esp!(esp_pm_configure(
+        &pm as *const _ as *const core::ffi::c_void
+    ))?;
+    }
 
     loop {
         let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
