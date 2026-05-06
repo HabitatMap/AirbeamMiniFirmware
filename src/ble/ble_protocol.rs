@@ -130,6 +130,7 @@ pub enum DeviceStatus {
         session: Uuid,
     },
     ReadyToSync {
+        file_size: u64,
         password: String,
     },
 }
@@ -162,11 +163,12 @@ impl DeviceStatus {
                 buf[2..18].copy_from_slice(&session.to_bytes_le());
                 18
             }
-            Self::ReadyToSync { password } => {
+            Self::ReadyToSync { file_size, password } => {
                 buf[0] = 0x03;
+                buf[1..9].copy_from_slice(&file_size.to_le_bytes());
                 let password_bytes = password.as_bytes();
-                buf[1..1 + password_bytes.len()].copy_from_slice(password_bytes);
-                1 + password_bytes.len()
+                buf[9..1 + password_bytes.len()].copy_from_slice(password_bytes);
+                9 + password_bytes.len()
             }
         }
     }
