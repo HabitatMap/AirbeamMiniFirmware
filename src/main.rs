@@ -15,7 +15,7 @@ use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
-use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::storage::session_config::{SessionType};
 use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
 use crate::wifi::wifi_manager::{SyncStatus, WifiManager};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -138,6 +138,7 @@ fn main() -> anyhow::Result<()> {
         let result = ble.run_setup(
             config,
             storage.has_measurements(),
+            storage.get_file_size().unwrap_or(1),
             || batt.read(&adc, &mut vbat_pin).signed_percent,
             || storage.clear_measurements(),
             || wifi_manager.manual_sync(),
@@ -262,8 +263,9 @@ fn main() -> anyhow::Result<()> {
                             loop {
                                 match sync_status.recv()? {
                                     SyncStatus::Ready { password } => {
+                                        let file_size = storage.get_file_size().unwrap_or(1);
                                         let _ = ble
-                                            .notify_status(&DeviceStatus::ReadyToSync { password });
+                                            .notify_status(&DeviceStatus::ReadyToSync { file_size, password });
                                     }
                                     SyncStatus::Done => break,
                                     SyncStatus::Syncing => {}

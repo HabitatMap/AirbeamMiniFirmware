@@ -158,6 +158,7 @@ impl BleManager {
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
+        file_size: u64,
         mut battery_level: F0,
         clear_storage: F1,
         start_sync: F2,
@@ -244,7 +245,7 @@ impl BleManager {
                             loop {
                                 match status.recv()? {
                                     SyncStatus::Ready { password } => self
-                                        .notify_status(&DeviceStatus::ReadyToSync { password })?,
+                                        .notify_status(&DeviceStatus::ReadyToSync { file_size, password })?,
                                     SyncStatus::Done => break,
                                     SyncStatus::Syncing => {}
                                 }
