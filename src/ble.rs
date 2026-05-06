@@ -244,8 +244,12 @@ impl BleManager {
                             // tear it down — the in-flight /sync TCP stream survives.
                             loop {
                                 match status.recv()? {
-                                    SyncStatus::Ready { password } => self
-                                        .notify_status(&DeviceStatus::ReadyToSync { file_size, password })?,
+                                    SyncStatus::Ready { password } => {
+                                        self.notify_status(&DeviceStatus::ReadyToSync {
+                                            file_size,
+                                            password,
+                                        })?
+                                    }
                                     SyncStatus::Done => break,
                                     SyncStatus::Syncing => {}
                                 }

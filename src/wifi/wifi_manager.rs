@@ -15,8 +15,8 @@ use esp_idf_svc::sys::{
     esp_err_t, esp_get_free_heap_size, esp_get_minimum_free_heap_size, esp_random,
     heap_caps_get_largest_free_block, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
     httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
-    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK,
-    MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
+    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT,
+    MALLOC_CAP_INTERNAL,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
@@ -84,9 +84,9 @@ impl WifiManager {
             let password = format!("{:08}", n);
             info!("manual_sync: stop prior wifi");
             let _ = wifi.stop(); // if already started
-            // Channel 1 is dense in real-world scans (23+ APs observed); pin
-            // SoftAP to 11 to dodge the congestion that was retransmitting /sync
-            // chunks until the phone TCP gave up at ~14s.
+                                 // Channel 1 is dense in real-world scans (23+ APs observed); pin
+                                 // SoftAP to 11 to dodge the congestion that was retransmitting /sync
+                                 // chunks until the phone TCP gave up at ~14s.
             info!("manual_sync: set AP config");
             wifi.set_configuration(&Configuration::AccessPoint(AccessPointConfiguration {
                 ssid: ssid.parse()?,
@@ -444,11 +444,8 @@ extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
             error!("sync_get: set_hdr Content-Length failed");
             return ESP_FAIL;
         }
-        if httpd_resp_set_hdr(
-            req,
-            c"Content-Disposition".as_ptr(),
-            c"attachment".as_ptr(),
-        ) != ESP_OK
+        if httpd_resp_set_hdr(req, c"Content-Disposition".as_ptr(), c"attachment".as_ptr())
+            != ESP_OK
         {
             error!("sync_get: set_hdr Content-Disposition failed");
             return ESP_FAIL;

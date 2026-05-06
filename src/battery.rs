@@ -1,9 +1,9 @@
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::adc::{AdcChannel, ADC1, ADCU1};
 use esp_idf_svc::hal::gpio::{Gpio3, Gpio4, Input, PinDriver, Pull};
+use log::info;
 use std::borrow::Borrow;
 use std::time::Instant;
-use log::info;
 
 // Divider ratio: V_bat = V_pin * 1499 / 1000  (e.g. 499kΩ top + 1000kΩ bottom)
 const DIVIDER_RATIO_NUM: u32 = 1499;
@@ -22,9 +22,9 @@ pub struct BatteryState {
 
 pub struct BatteryMonitor<'a> {
     usb_pin: PinDriver<'a, Input>,
-    history: [u32; 5],          // last 5 voltages, mV
+    history: [u32; 5], // last 5 voltages, mV
     history_idx: usize,
-    history_filled: usize,      // 0..=5
+    history_filled: usize, // 0..=5
 }
 
 impl<'a> BatteryMonitor<'a> {
@@ -75,7 +75,10 @@ impl<'a> BatteryMonitor<'a> {
 
         self.history[self.history_idx] = voltage_mv;
         self.history_idx = (self.history_idx + 1) % self.history.len();
-        self.history_filled = self.history_filled.saturating_add(1).min(self.history.len());
+        self.history_filled = self
+            .history_filled
+            .saturating_add(1)
+            .min(self.history.len());
 
         let mut buf = self.history[..self.history_filled].to_vec();
         buf.sort_unstable();
