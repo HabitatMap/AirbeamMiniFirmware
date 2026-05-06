@@ -15,7 +15,7 @@ use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
 use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
-use crate::storage::session_config::{SessionType};
+use crate::storage::session_config::SessionType;
 use crate::storage::storage_controller::{StorageManager, MOUNT_POINT};
 use crate::wifi::wifi_manager::{SyncStatus, WifiManager};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
@@ -23,6 +23,7 @@ use esp_idf_svc::fs::littlefs::Littlefs;
 use esp_idf_svc::hal::adc::attenuation::DB_12;
 use esp_idf_svc::hal::adc::oneshot::config::{AdcChannelConfig, Calibration};
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
+use esp_idf_svc::hal::adc::Resolution;
 use esp_idf_svc::hal::gpio;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::uart::config::{DataBits, StopBits};
@@ -36,7 +37,6 @@ use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use esp_idf_svc::hal::adc::Resolution;
 use uuid::Uuid;
 
 fn main() -> anyhow::Result<()> {
@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
     let adc_config = AdcChannelConfig {
         attenuation: DB_12,
         calibration: Calibration::Curve,
-        resolution: Resolution::Resolution12Bit
+        resolution: Resolution::Resolution12Bit,
     };
     let mut vbat_pin = AdcChannelDriver::new(&adc, peripherals.pins.gpio3, &adc_config)?;
 
@@ -124,8 +124,8 @@ fn main() -> anyhow::Result<()> {
             light_sleep_enable: true,
         };
         esp!(esp_pm_configure(
-        &pm as *const _ as *const core::ffi::c_void
-    ))?;
+            &pm as *const _ as *const core::ffi::c_void
+        ))?;
     }
 
     loop {
@@ -264,8 +264,10 @@ fn main() -> anyhow::Result<()> {
                                 match sync_status.recv()? {
                                     SyncStatus::Ready { password } => {
                                         let file_size = storage.get_file_size().unwrap_or(1);
-                                        let _ = ble
-                                            .notify_status(&DeviceStatus::ReadyToSync { file_size, password });
+                                        let _ = ble.notify_status(&DeviceStatus::ReadyToSync {
+                                            file_size,
+                                            password,
+                                        });
                                     }
                                     SyncStatus::Done => break,
                                     SyncStatus::Syncing => {}

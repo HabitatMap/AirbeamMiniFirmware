@@ -163,7 +163,10 @@ impl DeviceStatus {
                 buf[2..18].copy_from_slice(&session.to_bytes_le());
                 18
             }
-            Self::ReadyToSync { file_size, password } => {
+            Self::ReadyToSync {
+                file_size,
+                password,
+            } => {
                 buf[0] = 0x03;
                 buf[1..9].copy_from_slice(&file_size.to_le_bytes());
                 let password_bytes = password.as_bytes();

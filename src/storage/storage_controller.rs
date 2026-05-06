@@ -142,7 +142,7 @@ impl StorageManager {
             }
         }
     }
-    
+
     pub fn get_file_size(&self) -> Option<u64> {
         let _guard = self.inner.lock().ok()?;
         Some(std::fs::metadata(FILE_PATH).ok()?.len())
