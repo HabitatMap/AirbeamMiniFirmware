@@ -1,9 +1,9 @@
 use crate::sensor::measurement::Measurement;
-use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
+use crate::sensor::sensor_parser::parse_sensor;
 use crate::LoopEvent;
 use esp_idf_svc::hal::uart::UartDriver;
-use log::{info, log, warn};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use log::{info, warn};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -28,12 +28,6 @@ impl SensorDriver {
     pub fn new(uart: UartDriver<'static>) -> Self {
         Self {
             uart: Arc::new(Mutex::new(uart)),
-        }
-    }
-
-    pub fn sleep(&self) {
-        if let Ok(uart) = self.uart.lock() {
-            let _ = uart.write(&CMD_SLEEP);
         }
     }
 
@@ -73,8 +67,6 @@ impl SensorDriver {
                     thread::sleep(Duration::from_millis(100));
                 }
             }
-
-            let mut running = true;
 
             loop {
                 info!("Sensor Thread: Loop OK");
@@ -187,14 +179,13 @@ impl SensorDriver {
         F: FnMut() -> Option<[u8; 1]>,
     {
         let mut buf = [0u8; FRAME_LEN];
-        let mut byte_buf: Option<[u8; 1]> = None;
         let mut frame_idx = 0;
         let instant = Instant::now();
         //we make sure that first two bytes are 0x42 0x4D
         //when they are rest of the readout is collected into buf,
         //until we get FRAME_LEN bytes
         while frame_idx < FRAME_LEN && instant.elapsed() < timeout {
-            byte_buf = read_byte();
+            let byte_buf = read_byte();
             match byte_buf {
                 Some(byte_buf) => {
                     let b = byte_buf[0];

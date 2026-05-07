@@ -1,6 +1,6 @@
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
-use esp_idf_svc::hal::adc::{AdcChannel, ADC1, ADCU1};
-use esp_idf_svc::hal::gpio::{Gpio3, Gpio4, Input, PinDriver, Pull};
+use esp_idf_svc::hal::adc::{AdcChannel, ADCU1};
+use esp_idf_svc::hal::gpio::{Input, PinDriver, Pull};
 use log::info;
 use std::borrow::Borrow;
 use std::time::Instant;

@@ -239,7 +239,7 @@ impl WifiManager {
             .request(Method::Post, &url, &headers)
             .map_err(|_| SendingError::Retry)?;
         request.flush().map_err(|_| SendingError::Retry)?;
-        let mut response = request.submit().map_err(|_| SendingError::Retry)?;
+        let response = request.submit().map_err(|_| SendingError::Retry)?;
 
         if let Some(epoch) = response.header("X-Server-Time") {
             if let Ok(epoch) = epoch.parse::<i64>() {
@@ -302,7 +302,7 @@ impl WifiManager {
             .write_all(&payload)
             .map_err(|_| SendingError::Overflow)?;
         request.flush().map_err(|_| SendingError::Retry)?;
-        let mut response = request.submit().map_err(|_| SendingError::Retry)?;
+        let response = request.submit().map_err(|_| SendingError::Retry)?;
         let status = response.status();
 
         if let Some(epoch) = response.header("X-Server-Time") {
@@ -332,7 +332,7 @@ impl WifiManager {
     }
 
     pub fn is_connected(&self) -> bool {
-        if let Some(mut wifi) = self.wifi.try_lock() {
+        if let Some(wifi) = self.wifi.try_lock() {
             wifi.is_connected().unwrap_or(false)
         } else {
             false
@@ -369,15 +369,6 @@ impl WifiManager {
         buffer.push(checksum);
         Ok(buffer)
     }
-}
-
-#[derive(Debug)]
-pub enum WifiError {
-    NotConnected,
-    Config,
-    NotStarted,
-    LockError,
-    Other,
 }
 
 fn log_heap(tag: &str) {
