@@ -14,9 +14,10 @@ use esp_idf_svc::http::client::EspHttpConnection;
 use esp_idf_svc::sys::{
     esp_err_t, esp_get_free_heap_size, esp_get_minimum_free_heap_size, esp_random,
     heap_caps_get_largest_free_block, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
-    httpd_register_uri_handler, httpd_req_t, httpd_resp_send_chunk, httpd_resp_set_hdr,
-    httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT,
-    MALLOC_CAP_INTERNAL,
+    httpd_register_uri_handler, httpd_req_t, httpd_req_to_sockfd, httpd_resp_send_chunk,
+    httpd_resp_set_hdr, httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, linger,
+    lwip_setsockopt, socklen_t, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
+    SOL_SOCKET, SO_LINGER,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
@@ -25,6 +26,7 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::ptr;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::Duration;
 use uuid::Uuid;
 
 const CHUNK_SIZE: usize = 4096;
@@ -176,8 +178,19 @@ impl WifiManager {
     }
 
     pub fn cancel_manual_sync(&self) {
-        // Drop runs httpd_stop and frees the handler ctx box.
+        // Drop runs httpd_stop and frees the handler ctx box. httpd_stop
+        // closes the listening socket and signals worker tasks to terminate;
+        // in-flight TCP connections get FIN sent during unwind.
         drop(self.sync_server.lock().take());
+
+        // Grace window so lwIP drains its TX queue and TCP FIN/ACK exchange
+        // completes over the air before we deauth the station. Without this,
+        // wifi.stop() fires within ~20ms of the URI handler returning,
+        // RST'ing the client mid-stream — phone sees truncated body
+        // (httpComplete=false despite all bytes parsed) or missing response.
+        // Belt-and-braces with SO_LINGER set in sync_get_handler.
+        std::thread::sleep(Duration::from_millis(500));
+
         if let Some(mut wifi) = self.wifi.try_lock() {
             let _ = wifi.stop();
         }
@@ -481,6 +494,27 @@ extern "C" fn sync_get_handler(req: *mut httpd_req_t) -> esp_err_t {
         "sync_get: end-of-stream sent, returning OK ({} bytes in {} chunks)",
         sent_total, chunk_idx
     );
+
+    // SO_LINGER on the underlying socket so close() blocks on TCP ACK of all
+    // queued bytes before the kernel tears the connection down. Pairs with
+    // the grace sleep in cancel_manual_sync. Requires CONFIG_LWIP_SO_LINGER=y.
+    let sockfd = unsafe { httpd_req_to_sockfd(req) };
+    if sockfd >= 0 {
+        let l = linger {
+            l_onoff: 1,
+            l_linger: 5,
+        };
+        unsafe {
+            lwip_setsockopt(
+                sockfd,
+                SOL_SOCKET as c_int,
+                SO_LINGER as c_int,
+                &l as *const _ as *const c_void,
+                std::mem::size_of::<linger>() as socklen_t,
+            );
+        }
+    }
+
     let _ = ctx.tx.send(SyncStatus::Done);
     ESP_OK
 }
