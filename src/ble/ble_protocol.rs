@@ -170,7 +170,7 @@ impl DeviceStatus {
                 buf[0] = 0x03;
                 buf[1..9].copy_from_slice(&file_size.to_le_bytes());
                 let password_bytes = password.as_bytes();
-                buf[9..1 + password_bytes.len()].copy_from_slice(password_bytes);
+                buf[9..9 + password_bytes.len()].copy_from_slice(password_bytes);
                 9 + password_bytes.len()
             }
         }
