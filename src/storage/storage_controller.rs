@@ -1,4 +1,3 @@
-use crate::aggregator::MeasurementAggregator;
 use crate::sensor::measurement::Measurement;
 use crate::storage::storage_iterator::MeasurementIter;
 use log::{error, info, warn};
@@ -22,7 +21,6 @@ struct StorageInner {
 
 pub struct StorageManager {
     inner: Mutex<StorageInner>,
-    aggregator: Option<MeasurementAggregator>,
 }
 
 impl StorageManager {
@@ -37,30 +35,12 @@ impl StorageManager {
         Self {
             inner: Mutex::new(StorageInner {
                 buffer: Vec::with_capacity(BUFFER_CAPACITY),
-            }),
-            aggregator: None,
+            })
         }
-    }
-
-    pub fn set_aggregator(&mut self, interval: Duration) {
-        self.aggregator = if interval.as_secs() < 60 {
-            Some(MeasurementAggregator::new(interval))
-        } else {
-            None
-        };
     }
 
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
     pub fn save_measurement(&mut self, record: Measurement) -> anyhow::Result<()> {
-        let to_save = if let Some(aggregator) = self.aggregator.as_mut() {
-            aggregator.average_measurement(record.clone())
-        } else {
-            Some(record)
-        };
-
-        if to_save.is_none() {
-            return Ok(());
-        }
         let mut inner = self.inner.lock().unwrap();
         inner.buffer.push(record);
 

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const START_BYTE_1: u8 = 0x42;
 pub const START_BYTE_2: u8 = 0x4D;
 pub const FRAME_LEN: usize = 32;
+const CMD_ACTIVE: [u8; 7] = [0x42, 0x4D, 0xE1, 0x00, 0x01, 0x01, 0x71];
 const CMD_PASSIVE: [u8; 7] = [0x42, 0x4D, 0xE1, 0x00, 0x00, 0x01, 0x70];
 const CMD_READ: [u8; 7] = [0x42, 0x4D, 0xE2, 0x00, 0x00, 0x01, 0x71];
 const CMD_SLEEP: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x00, 0x01, 0x73];
@@ -66,6 +67,11 @@ impl SensorDriver {
                     let _ = uart.write(&CMD_WAKE);
                     thread::sleep(Duration::from_millis(100));
                 }
+                if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
+                    let _ = uart.write(&CMD_PASSIVE);
+                } else {
+                    let _ = uart.write(&CMD_ACTIVE);
+                }
             }
 
             loop {
@@ -116,6 +122,7 @@ impl SensorDriver {
                             log::error!("Error sending measurement: {:?}", e);
                         });
                     }
+                    thread::sleep(sleep_time);
                 }
             }
             info!("Sensor Thread: Loop stopped.");
@@ -145,7 +152,7 @@ impl SensorDriver {
         let mut stopped = false;
 
         while duration > instant.elapsed() {
-            read_command(); //TODO: slowdown? current speed 800meas/min
+            let isPassive = read_command().is_some();
             if let Some(parsed) = Self::read_uart(&mut read_byte, Duration::from_secs(5)) {
                 pm1_0_sum += parsed.pm1_0_avg as u32;
                 pm2_5_sum += parsed.pm2_5_avg as u32;
@@ -156,6 +163,7 @@ impl SensorDriver {
                 stopped = true;
                 break;
             }
+            if isPassive {thread::sleep(Duration::from_millis(500));}
         }
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok();
         if count > 0 && timestamp.is_some() {
