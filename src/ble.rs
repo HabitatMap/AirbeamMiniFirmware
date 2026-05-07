@@ -10,8 +10,7 @@ use esp32_nimble::utilities::mutex::Mutex as NimbleMutex;
 use esp32_nimble::utilities::BleUuid;
 use esp32_nimble::{
     enums::{ConnMode, DiscMode},
-    uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, BLEServer, NimbleProperties,
-    NotifyTxStatus,
+    uuid128, BLEAdvertisementData, BLECharacteristic, BLEDevice, NimbleProperties, NotifyTxStatus,
 };
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{error, info, warn};
@@ -44,7 +43,6 @@ pub struct BleManager {
     //channels for BLE data
     notify_status: std::sync::mpsc::Receiver<NotifyTxStatus>,
     cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
-    cmd_tx: std::sync::mpsc::Sender<AppCommand>,
     // keep server alive
     _ble_device: &'static BLEDevice,
 }
@@ -66,7 +64,7 @@ impl BleManager {
             let _ = server.update_conn_params(desc.conn_handle(), 6, 24, 0, 200);
         });
 
-        server.on_disconnect(move |_desc, reason| {
+        server.on_disconnect(move |_, _| {
             info!("BLE client disconnected");
         });
 
@@ -155,7 +153,6 @@ impl BleManager {
             sync_chr,
             notify_status: notify_status_rx,
             cmd_rx,
-            cmd_tx,
             _ble_device: ble_device,
         })
     }
@@ -237,7 +234,7 @@ impl BleManager {
                     self.send_response(DeviceResponse::Ack)?;
                     match clear_storage() {
                         Ok(()) => self.send_response(DeviceResponse::Ready)?,
-                        Err(e) => {
+                        Err(_) => {
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }
                     }
@@ -276,7 +273,7 @@ impl BleManager {
                     if let SessionType::FIXED {
                         pm1_index: _,
                         pm2_5_index: _,
-                        token,
+                        token: _,
                         wifi_ssid,
                         wifi_password,
                     } = &config.session_type
@@ -382,14 +379,6 @@ impl BleManager {
             Err(SendingError::Retry)
         }
     }
-
-    /// Restart advertising after a disconnect
-    pub fn restart_advertising(&self) -> anyhow::Result<()> {
-        self._ble_device.get_advertising().lock().start()?;
-        info!("BLE re-advertising");
-        Ok(())
-    }
-
     pub fn stop(&self) {
         let server = self._ble_device.get_server();
         server.connections().for_each(|connection| {

@@ -1,7 +1,5 @@
 use esp_idf_svc::hal::gpio::OutputPin;
-use esp_idf_svc::hal::ledc::{
-    LedcChannel, LedcDriver, LedcTimer, LedcTimerDriver, LowSpeed, SpeedMode,
-};
+use esp_idf_svc::hal::ledc::{LedcChannel, LedcDriver, LedcTimerDriver, LowSpeed};
 use std::borrow::Borrow;
 pub struct RgbLed<'a> {
     red: LedcDriver<'a>,

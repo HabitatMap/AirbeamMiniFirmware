@@ -44,13 +44,13 @@ where
                 Err(SyncError::RemoveStorage)
             }
         }
-        Err(e) => Err(SyncError::Send(e)),
+        Err(e) => Err(SyncError::Send),
     }
 }
 #[derive(Debug)]
 pub enum SyncError {
     GetStorage,
     RemoveStorage,
-    Send(SendingError),
+    Send,
     NoHeapSpace,
 }

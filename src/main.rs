@@ -33,11 +33,10 @@ use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::{esp, esp_pm_config_t, esp_pm_configure, settimeofday, timeval};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
-use log::{error, info, warn};
+use log::{error, info};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uuid::Uuid;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -300,7 +299,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             if storage.has_measurements() && connected() {
-                if let Err(e) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
+                if let Err(_) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
                     error!("Failed to sync");
                 }
             }

@@ -1,6 +1,5 @@
 use crate::sensor::sensor_parser::PmsMeasurement;
 use crate::LoopEvent;
-use uuid::Timestamp;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct Measurement {

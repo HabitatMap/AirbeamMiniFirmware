@@ -21,11 +21,6 @@ pub enum SessionType {
 }
 
 impl SessionConfig {
-    pub const PM_1_NAME: &str = "PM1";
-    pub const PM_2_5_NAME: &str = "PM2.5";
-    pub const PM_1_UNIT: &str = "μg/m3";
-    pub const PM_2_5_UNIT: &str = "μg/m3";
-
     pub fn new(session_uuid: Uuid, interval: Duration, session_type: SessionType) -> Self {
         Self {
             session_uuid,

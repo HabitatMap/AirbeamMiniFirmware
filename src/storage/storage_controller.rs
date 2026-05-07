@@ -3,7 +3,7 @@ use crate::sensor::measurement::Measurement;
 use crate::storage::storage_iterator::MeasurementIter;
 use log::{error, info, warn};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -52,7 +52,7 @@ impl StorageManager {
 
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
     pub fn save_measurement(&mut self, record: Measurement) -> anyhow::Result<()> {
-        let to_save = if let Some(mut aggregator) = self.aggregator.as_mut() {
+        let to_save = if let Some(aggregator) = self.aggregator.as_mut() {
             aggregator.average_measurement(record.clone())
         } else {
             Some(record)
