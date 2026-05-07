@@ -49,6 +49,10 @@ impl SensorDriver {
                 //We need to wake up the sensor for active mode,
                 // assumption is that sensor will be in sleep on start
                 let _ = uart.clear_rx();
+                uart.write(&CMD_WAKE).ok();
+                thread::sleep(Duration::from_secs(1));
+                uart.write(&CMD_ACTIVE).ok();
+                thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
                     match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT) {
@@ -60,6 +64,11 @@ impl SensorDriver {
                     info!("Read successful. Sending inital measurement.");
                     let _ = event_tx.send(m.into());
                 }
+                if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
+                    let _ = uart.write(&CMD_PASSIVE);
+                } else {
+                    let _ = uart.write(&CMD_ACTIVE);
+                }
                 if should_sleep {
                     let _ = uart.write(&CMD_SLEEP);
                     thread::sleep(Duration::from_millis(100));
@@ -67,15 +76,11 @@ impl SensorDriver {
                     let _ = uart.write(&CMD_WAKE);
                     thread::sleep(Duration::from_millis(100));
                 }
-                if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
-                    let _ = uart.write(&CMD_PASSIVE);
-                } else {
-                    let _ = uart.write(&CMD_ACTIVE);
-                }
             }
 
             loop {
                 info!("Sensor Thread: Loop OK");
+                thread::sleep(sleep_time);
                 if let Ok(uart) = uart_shared.lock() {
                     let read_byte = || {
                         let mut byte_buf = [0u8; 1];
@@ -122,7 +127,6 @@ impl SensorDriver {
                             log::error!("Error sending measurement: {:?}", e);
                         });
                     }
-                    thread::sleep(sleep_time);
                 }
             }
             info!("Sensor Thread: Loop stopped.");
@@ -152,7 +156,7 @@ impl SensorDriver {
         let mut stopped = false;
 
         while duration > instant.elapsed() {
-            let isPassive = read_command().is_some();
+            let is_passive = read_command().is_some();
             if let Some(parsed) = Self::read_uart(&mut read_byte, Duration::from_secs(5)) {
                 pm1_0_sum += parsed.pm1_0_avg as u32;
                 pm2_5_sum += parsed.pm2_5_avg as u32;
@@ -163,7 +167,7 @@ impl SensorDriver {
                 stopped = true;
                 break;
             }
-            if isPassive {thread::sleep(Duration::from_millis(500));}
+            if is_passive {thread::sleep(Duration::from_millis(500));}
         }
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok();
         if count > 0 && timestamp.is_some() {
@@ -238,8 +242,7 @@ impl SensorDriver {
     pub(self) fn get_loop_durations(period: Duration) -> (Duration, Duration) {
         let seconds = period.as_secs();
         match seconds {
-            0..=59 => (Duration::from_millis(10), Duration::from_secs(1)), //no sleep, active mode
-            60 => (Duration::from_millis(10), Duration::from_secs(60)),    //
+            0..=60 => (Duration::from_millis(10), Duration::from_secs(seconds)), //no sleep, active mode
             _ => {
                 let collection_time = (seconds / 2).clamp(30, 60);
                 (
