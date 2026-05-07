@@ -128,6 +128,12 @@ fn main() -> anyhow::Result<()> {
         ))?;
     }
 
+    info!(
+        "Startup complete!, AirBeamMini MAC: {}, Version: {}",
+        mac_str,
+        env!("CARGO_PKG_VERSION")
+    );
+
     loop {
         let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
             nvs_manager.clear_session_config();

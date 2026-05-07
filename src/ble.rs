@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
 const STATUS_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0002-4b3c-8e9a-1f2d3c4b5a60");
 const COMMAND_CHAR_UUID: BleUuid = uuid128!("a0e1f000-0003-4b3c-8e9a-1f2d3c4b5a60");
@@ -71,6 +72,12 @@ impl BleManager {
 
         // ── 3. Create service + characteristics ──────────────────────────
         let service = server.create_service(SERVICE_UUID);
+
+        service
+            .lock()
+            .create_characteristic(BleUuid::from_uuid16(0x2A26), NimbleProperties::READ)
+            .lock()
+            .set_value(FW_VERSION.as_bytes());
 
         // Status: notify-only (device → app on connect)
         let status_chr = service.lock().create_characteristic(
@@ -386,7 +393,10 @@ impl BleManager {
     pub fn stop(&self) {
         let server = self._ble_device.get_server();
         server.connections().for_each(|connection| {
-            let _ = self._ble_device.get_server().disconnect(connection.conn_handle());
+            let _ = self
+                ._ble_device
+                .get_server()
+                .disconnect(connection.conn_handle());
         });
         let _ = self._ble_device.get_advertising().lock().stop();
     }
