@@ -1,4 +1,3 @@
-mod aggregator;
 mod autosync;
 mod battery;
 mod ble;
@@ -158,8 +157,6 @@ fn main() -> anyhow::Result<()> {
         } else {
             &nvs_manager.get_session_config()?.unwrap()
         };
-
-        storage.set_aggregator(config.interval);
         let domain = nvs_manager.get_domain()?;
 
         let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
