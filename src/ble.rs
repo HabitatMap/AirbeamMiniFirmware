@@ -382,6 +382,14 @@ impl BleManager {
         info!("BLE re-advertising");
         Ok(())
     }
+
+    pub fn stop(&self) {
+        let server = self._ble_device.get_server();
+        server.connections().for_each(|connection| {
+            let _ = self._ble_device.get_server().disconnect(connection.conn_handle());
+        });
+        let _ = self._ble_device.get_advertising().lock().stop();
+    }
     /// returns true if we connected, false if we timed out
     fn wait_for_connection(&self, timeout: Option<Duration>) -> anyhow::Result<bool> {
         let server = self._ble_device.get_server();

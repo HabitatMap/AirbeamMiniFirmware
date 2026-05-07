@@ -57,7 +57,6 @@ impl Drop for SyncServer {
         }
     }
 }
-
 pub struct WifiManager {
     wifi: Mutex<BlockingWifi<EspWifi<'static>>>,
     sync_server: Mutex<Option<SyncServer>>,
@@ -325,7 +324,7 @@ impl WifiManager {
         Ok(())
     }
 
-    pub fn disconnect(&mut self) {
+    pub fn disconnect(&self) {
         if let Some(mut wifi) = self.wifi.try_lock() {
             let _ = wifi.disconnect();
             let _ = wifi.stop();

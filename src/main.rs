@@ -223,6 +223,10 @@ fn main() -> anyhow::Result<()> {
             None
         };
 
+        if let SessionType::MOBILE = config.session_type {
+            wifi_manager.disconnect();
+        }
+
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
             if let Ok(event) = event {
@@ -239,6 +243,9 @@ fn main() -> anyhow::Result<()> {
                         } else {
                             if ble.is_connected() {
                                 let _ = ble.send_response(DeviceResponse::Ready);
+                                if let SessionType::FIXED { .. } = config.session_type {
+                                    ble.stop()
+                                }
                             }
                         }
                     }
