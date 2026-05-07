@@ -23,3 +23,7 @@ CONFIG_BT_NIMBLE_ENABLED=y
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 CONFIG_UART_ISR_IN_IRAM=y
+
+# Required so SO_LINGER setsockopt actually blocks close() on FIN/ACK
+# (off by default in lwip — without it lwip_setsockopt returns ENOPROTOOPT).
+CONFIG_LWIP_SO_LINGER=y
