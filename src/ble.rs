@@ -256,7 +256,7 @@ impl BleManager {
                                             password,
                                         })?
                                     }
-                                    SyncStatus::Done => { break },
+                                    SyncStatus::Done => break,
                                     SyncStatus::Syncing => {
                                         let _ = led_command.send(LedStates::Syncing);
                                     }

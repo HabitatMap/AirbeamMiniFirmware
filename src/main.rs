@@ -233,7 +233,7 @@ fn main() -> anyhow::Result<()> {
 
             let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
 
-            if (-20..=20).contains(&battery) && !low_bat_flag{
+            if (-20..=20).contains(&battery) && !low_bat_flag {
                 let _ = led_command.send(LedStates::LowBattery);
                 low_bat_flag = true;
             } else if !(-25..=25).contains(&battery) && low_bat_flag {
