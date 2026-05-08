@@ -16,8 +16,8 @@ use esp_idf_svc::sys::{
     heap_caps_get_largest_free_block, http_method_HTTP_GET, httpd_config_t, httpd_handle_t,
     httpd_register_uri_handler, httpd_req_t, httpd_req_to_sockfd, httpd_resp_send_chunk,
     httpd_resp_set_hdr, httpd_resp_set_type, httpd_start, httpd_stop, httpd_uri_t, linger,
-    lwip_setsockopt, socklen_t, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL,
-    SOL_SOCKET, SO_LINGER,
+    lwip_setsockopt, socklen_t, ESP_FAIL, ESP_OK, MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL, SOL_SOCKET,
+    SO_LINGER,
 };
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
