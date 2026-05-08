@@ -10,7 +10,7 @@ use crate::autosync::sync_from_storage;
 use crate::battery::BatteryMonitor;
 use crate::ble::ble_protocol::{DeviceResponse, DeviceStatus, ErrorCode};
 use crate::ble::SetupResult;
-use crate::led::led_thread::{start_led_thread, Color, LedCommand, LedPins};
+use crate::led::led_thread::{start_led_thread, LedPins, LedStates};
 use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
@@ -133,6 +133,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     loop {
+        let _ = led_command.send(LedStates::Idle);
         let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
             nvs_manager.clear_session_config();
             error!("Failed to get session config: {:?}", e);
@@ -148,6 +149,7 @@ fn main() -> anyhow::Result<()> {
             || wifi_manager.manual_sync(),
             || wifi_manager.cancel_manual_sync(),
             |ssid, password| wifi_manager.connect(ssid, password),
+            led_command.clone(),
         )?;
         info!("BLE setup result: {:?}", result);
 
@@ -159,13 +161,9 @@ fn main() -> anyhow::Result<()> {
         };
         let domain = nvs_manager.get_domain()?;
 
-        let mut send_measurement = |m: Measurement| -> Result<(), SendingError> {
+        let mut send_measurement = |m: Measurement, battery: i8| -> Result<(), SendingError> {
             match &config.session_type {
-                SessionType::MOBILE => ble.send_measurement(
-                    &m,
-                    batt.read(&adc, &mut vbat_pin).signed_percent,
-                    config.session_uuid,
-                ),
+                SessionType::MOBILE => ble.send_measurement(&m, battery, config.session_uuid),
                 _ => wifi_manager.send_measurements(
                     &[m],
                     domain.as_str(),
@@ -228,15 +226,27 @@ fn main() -> anyhow::Result<()> {
         if let SessionType::MOBILE = config.session_type {
             wifi_manager.disconnect();
         }
-
+        let _ = led_command.send(LedStates::Running);
+        let mut low_bat_flag = false;
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
+
+            let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
+
+            if (-20..=20).contains(&battery) && !low_bat_flag{
+                let _ = led_command.send(LedStates::LowBattery);
+                low_bat_flag = true;
+            } else if !(-25..=25).contains(&battery) && low_bat_flag {
+                let _ = led_command.send(LedStates::Running);
+                low_bat_flag = false;
+            }
+
             if let Ok(event) = event {
                 match event {
                     LoopEvent::Measurement(m) => {
                         let notify = on_wifi_error.take();
                         info!("Got measurement: {:?}", m);
-                        if send_measurement(m).is_err() {
+                        if send_measurement(m, battery).is_err() {
                             if let Some(f) = notify {
                                 f();
                                 break;
@@ -296,9 +306,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             if storage.has_measurements() && connected() {
-                if let Err(_) = sync_from_storage(&config, &storage, |m| send_measurements(m)) {
-                    error!("Failed to sync");
-                }
+                let _ = sync_from_storage(&config, &storage, |m| send_measurements(m));
             }
         }
     }

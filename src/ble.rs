@@ -1,6 +1,7 @@
 pub mod ble_protocol;
 
 use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCode};
+use crate::led::led_thread::LedStates;
 use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
 use crate::wifi::wifi_manager::SyncStatus;
@@ -168,6 +169,7 @@ impl BleManager {
         start_sync: F2,
         stop_sync: F3,
         connect_to_wifi: W,
+        led_command: Sender<LedStates>,
     ) -> anyhow::Result<SetupResult>
     where
         F0: FnMut() -> i8,
@@ -191,7 +193,7 @@ impl BleManager {
                 }
             }
         }
-
+        let _ = led_command.send(LedStates::BleConnected);
         // small delay so the client has time to subscribe to notifications
         std::thread::sleep(Duration::from_millis(300));
 
@@ -254,11 +256,14 @@ impl BleManager {
                                             password,
                                         })?
                                     }
-                                    SyncStatus::Done => break,
-                                    SyncStatus::Syncing => {}
+                                    SyncStatus::Done => { break },
+                                    SyncStatus::Syncing => {
+                                        let _ = led_command.send(LedStates::Syncing);
+                                    }
                                 }
                             }
                             stop_sync();
+                            let _ = led_command.send(LedStates::BleConnected);
                             let _ = self.send_response(DeviceResponse::Ready);
                         }
                         Err(e) => {

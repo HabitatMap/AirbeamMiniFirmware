@@ -33,14 +33,25 @@ impl<'a> RgbLed<'a> {
         })
     }
 
-    pub fn set_color(&mut self, r: u8, g: u8, b: u8) -> anyhow::Result<()> {
-        self.red.set_duty(r as u32)?;
-        self.green.set_duty(g as u32)?;
-        self.blue.set_duty(b as u32)?;
+    pub fn set_color(&mut self, r: u8, g: u8, b: u8, brightness: Option<u8>) -> anyhow::Result<()> {
+        self.red.set_duty(Self::change_brightnes(r, brightness))?;
+        self.green.set_duty(Self::change_brightnes(g, brightness))?;
+        self.blue.set_duty(Self::change_brightnes(b, brightness))?;
         Ok(())
     }
 
+    fn change_brightnes(value: u8, percent: Option<u8>) -> u32 {
+        if let Some(percent) = percent {
+            let percent = percent.clamp(0, 100);
+            let intensity = 255u16 - value as u16;
+            let scaled = intensity * (percent as u16) / 100;
+            (255 - scaled) as u32
+        } else {
+            value as u32
+        }
+    }
+
     pub fn off(&mut self) -> anyhow::Result<()> {
-        self.set_color(0, 0, 0)
+        self.set_color(255, 255, 255, None)
     }
 }

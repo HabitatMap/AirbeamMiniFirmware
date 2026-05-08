@@ -8,6 +8,14 @@ use std::time::Duration;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::ledc::{LedcChannel, LedcTimer, LowSpeed};
 
+pub enum LedStates {
+    Idle,
+    Running,
+    BleConnected,
+    LowBattery,
+    Syncing,
+}
+
 #[derive(Clone, Copy)]
 pub struct Color {
     pub r: u8,
@@ -31,10 +39,13 @@ impl Color {
         g: 255,
         b: 0,
     };
+    pub const MAGENTA: Color = Color { r: 0, g: 255, b: 0 };
+    pub const CYAN: Color = Color { r: 255, g: 0, b: 0 };
+    pub const YELLOW: Color = Color { r: 0, g: 0, b: 255 };
     pub const WHITE: Color = Color { r: 0, g: 0, b: 0 };
 }
 
-pub enum LedCommand {
+enum LedCommand {
     Off,
     Continuous(Color),
     Blinking(Color, Duration),
@@ -50,9 +61,19 @@ pub struct LedPins<T, C0, C1, C2, R, G, B> {
     pub pin_b: B,
 }
 
+fn get_command(status: LedStates) -> LedCommand {
+    match status {
+        LedStates::Idle => LedCommand::Continuous(Color::GREEN),
+        LedStates::Running => LedCommand::Blinking(Color::BLUE, Duration::from_secs(10)),
+        LedStates::BleConnected => LedCommand::Continuous(Color::BLUE),
+        LedStates::LowBattery => LedCommand::Blinking(Color::RED, Duration::from_secs(1)),
+        LedStates::Syncing => LedCommand::Blinking(Color::WHITE, Duration::from_secs(1)),
+    }
+}
+
 pub fn start_led_thread<T, C0, C1, C2, R, G, B>(
     pins: LedPins<T, C0, C1, C2, R, G, B>,
-) -> anyhow::Result<mpsc::Sender<LedCommand>>
+) -> anyhow::Result<mpsc::Sender<LedStates>>
 where
     T: LedcTimer<SpeedMode = LowSpeed> + 'static,
     C0: LedcChannel<SpeedMode = LowSpeed> + 'static,
@@ -62,7 +83,7 @@ where
     G: OutputPin + 'static,
     B: OutputPin + 'static,
 {
-    let (tx, rx) = mpsc::channel::<LedCommand>();
+    let (tx, rx) = mpsc::channel::<LedStates>();
 
     // --- Hardware Initialization (Main Thread) ---
     // Perform initialization here so we can fail fast if hardware is missing/busy
@@ -96,7 +117,7 @@ where
                     // Wait indefinitely for a new command (Blocks thread, saves CPU)
                     match rx.recv() {
                         Ok(cmd) => {
-                            current_mode = cmd;
+                            current_mode = get_command(cmd);
                             blink_is_on = true; // Reset phase for new command
                         }
                         Err(_) => {
@@ -106,14 +127,14 @@ where
                     }
                 }
                 LedCommand::Continuous(color) => {
-                    if let Err(e) = led.set_color(color.r, color.g, color.b) {
+                    if let Err(e) = led.set_color(color.r, color.g, color.b, Some(60)) {
                         log::error!("Failed to set solid LED color: {:?}", e);
                     }
 
                     // Wait indefinitely for a new command
                     match rx.recv() {
                         Ok(cmd) => {
-                            current_mode = cmd;
+                            current_mode = get_command(cmd);
                             blink_is_on = true;
                         }
                         Err(_) => {
@@ -127,9 +148,15 @@ where
                 LedCommand::Blinking(color, timeout) => {
                     // 1. Apply the current blink state (On or Off)
                     let set_result = if blink_is_on {
-                        led.set_color(color.r, color.g, color.b)
+                        led.set_color(color.r, color.g, color.b, Some(70))
                     } else {
                         led.off()
+                    };
+
+                    let timeout = if blink_is_on {
+                        Duration::from_secs(1)
+                    } else {
+                        timeout
                     };
 
                     if let Err(e) = set_result {
@@ -139,7 +166,7 @@ where
                     // 2. Wait for the period duration OR a new command
                     match rx.recv_timeout(timeout) {
                         Ok(cmd) => {
-                            current_mode = cmd;
+                            current_mode = get_command(cmd);
                             blink_is_on = true; // Reset phase
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {

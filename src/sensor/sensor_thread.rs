@@ -167,7 +167,9 @@ impl SensorDriver {
                 stopped = true;
                 break;
             }
-            if is_passive {thread::sleep(Duration::from_millis(500));}
+            if is_passive {
+                thread::sleep(Duration::from_millis(500));
+            }
         }
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok();
         if count > 0 && timestamp.is_some() {
