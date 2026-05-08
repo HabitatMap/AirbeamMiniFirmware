@@ -35,7 +35,7 @@ impl StorageManager {
         Self {
             inner: Mutex::new(StorageInner {
                 buffer: Vec::with_capacity(BUFFER_CAPACITY),
-            })
+            }),
         }
     }
 
