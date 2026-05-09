@@ -2,12 +2,9 @@ use byteorder::{BigEndian, ByteOrder};
 
 #[derive(Debug, Default, Clone)]
 pub struct PmsMeasurement {
-    pm1_0_std: u16,
-    pm2_5_std: u16,
-    pm10_std: u16,
-    pub pm1_0_atm: u16,
-    pub pm2_5_atm: u16,
-    pub pm10_atm: u16,
+    pub(crate) c03: u16,
+    c05: u16,
+    pub(crate) c10: u16,
 }
 pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     // Checksum is the last 2 bytes. It should be equal to the sum of the first 30 bytes.
@@ -17,23 +14,14 @@ pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     if checksum_received != checksum_calculated {
         return None;
     }
-
-    // Standard Particles (CF=1, standard particle)
-    let pm1_0_std = BigEndian::read_u16(&buffer[4..6]);
-    let pm2_5_std = BigEndian::read_u16(&buffer[6..8]);
-    let pm10_std = BigEndian::read_u16(&buffer[8..10]);
-
-    // Atmospheric Environment (This is usually what you want for air quality)
-    let pm1_0_atm = BigEndian::read_u16(&buffer[10..12]);
-    let pm2_5_atm = BigEndian::read_u16(&buffer[12..14]);
-    let pm10_atm = BigEndian::read_u16(&buffer[14..16]);
+    
+    let c03 = BigEndian::read_u16(&buffer[16..18]);
+    let c05 = BigEndian::read_u16(&buffer[18..20]);
+    let c10 = BigEndian::read_u16(&buffer[20..22]);
 
     Some(PmsMeasurement {
-        pm1_0_std,
-        pm2_5_std,
-        pm10_std,
-        pm1_0_atm,
-        pm2_5_atm,
-        pm10_atm,
+        c03,
+        c05,
+        c10,
     })
 }

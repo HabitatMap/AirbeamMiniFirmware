@@ -22,7 +22,11 @@ impl Measurement {
     }
 
     pub fn from_pms_measurement(pms: PmsMeasurement, timestamp: u32) -> Self {
-        Measurement::new(pms.pm1_0_atm, pms.pm2_5_atm, timestamp)
+
+        let pm2_5 = (1.23345 + 0.005157 * (pms.c03 as f32) + 0.211782 * (pms.c10 as f32)).max(0.0);
+        let pm1 = (pm2_5 * (0.855 - 0.818 * (-pm2_5 / 6.12_f32).exp())).max(0.0);
+
+        Measurement::new(pm1.round() as u16, pm2_5.round() as u16, timestamp)
     }
 }
 
