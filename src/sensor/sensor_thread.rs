@@ -38,6 +38,11 @@ impl SensorDriver {
 
         let (stop_tx, stop_rx) = mpsc::channel();
         let uart_shared = self.uart.clone();
+
+        if period == Duration::from_secs(60) {
+            return Self::start_fixed_minute_task(uart_shared, event_tx, stop_tx, stop_rx);
+        }
+
         let (sleep_time, averaging_time) = Self::get_loop_durations(period);
         let should_sleep = Self::should_sleep(period);
 
@@ -132,6 +137,92 @@ impl SensorDriver {
             info!("Sensor Thread: Loop stopped.");
             // When loop breaks due to stop command, put sensor to sleep
             if let Ok(uart) = uart_shared.lock() {
+                let _ = uart.write(&CMD_SLEEP);
+                info!("Sensor command: SLEEP sent.");
+            }
+        });
+        stop_tx
+    }
+
+    fn start_fixed_minute_task(
+        uart_shared: Arc<Mutex<UartDriver<'static>>>,
+        event_tx: Sender<LoopEvent>,
+        stop_tx: Sender<()>,
+        stop_rx: Receiver<()>,
+    ) -> Sender<()> {
+        thread::spawn(move || {
+            info!("Sensor Thread: Started (fixed-minute mode).");
+            if let Ok(uart) = uart_shared.lock() {
+                let _ = uart.clear_rx();
+                uart.write(&CMD_WAKE).ok();
+                thread::sleep(Duration::from_secs(1));
+                uart.write(&CMD_ACTIVE).ok();
+                thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
+
+                let read_byte = || {
+                    let mut byte_buf = [0u8; 1];
+                    match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT) {
+                        Ok(_bytes) => Some(byte_buf),
+                        _ => None,
+                    }
+                };
+                if let Some(m) = Self::read_uart(read_byte, Duration::from_secs(5)) {
+                    info!("Read successful. Sending initial measurement.");
+                    let _ = event_tx.send(m.into());
+                }
+
+                let mut sum_pm1: u32 = 0;
+                let mut sum_pm25: u32 = 0;
+                let mut count: u32 = 0;
+                let mut current_minute: u64 = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() / 60)
+                    .unwrap_or(0);
+
+                let read_byte_loop = || {
+                    let mut byte_buf = [0u8; 1];
+                    match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT) {
+                        Ok(_bytes) => Some(byte_buf),
+                        _ => None,
+                    }
+                };
+
+                loop {
+                    if stop_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    if let Some(frame) =
+                        Self::read_uart(read_byte_loop, Duration::from_secs(5))
+                    {
+                        let now_min = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs() / 60)
+                            .unwrap_or(current_minute);
+                        if now_min != current_minute {
+                            if count > 0 {
+                                let m = Measurement {
+                                    pm1_0_avg: (sum_pm1 / count) as u16,
+                                    pm2_5_avg: (sum_pm25 / count) as u16,
+                                    timestamp: (current_minute * 60) as u32,
+                                };
+                                event_tx.send(m.into()).unwrap_or_else(|e| {
+                                    log::error!("Error sending measurement: {:?}", e);
+                                });
+                            } else {
+                                warn!("No samples in minute {}, skipping emit.", current_minute);
+                            }
+                            sum_pm1 = 0;
+                            sum_pm25 = 0;
+                            count = 0;
+                            current_minute = now_min;
+                        }
+                        sum_pm1 += frame.pm1_0_avg as u32;
+                        sum_pm25 += frame.pm2_5_avg as u32;
+                        count += 1;
+                    }
+                }
+
+                info!("Sensor Thread: Loop stopped.");
                 let _ = uart.write(&CMD_SLEEP);
                 info!("Sensor command: SLEEP sent.");
             }
