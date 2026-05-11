@@ -166,18 +166,21 @@ impl SensorDriver {
                         _ => None,
                     }
                 };
-                if let Some(m) = Self::read_uart(read_byte, Duration::from_secs(5)) {
+                let initial = Self::read_uart(read_byte, Duration::from_secs(5));
+                let mut current_minute: u64 = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs() / 60)
+                    .unwrap_or(0);
+                let initial_minute = current_minute;
+                if let Some(mut m) = initial {
                     info!("Read successful. Sending initial measurement.");
+                    m.timestamp = (current_minute * 60) as u32;
                     let _ = event_tx.send(m.into());
                 }
 
                 let mut sum_pm1: u32 = 0;
                 let mut sum_pm25: u32 = 0;
                 let mut count: u32 = 0;
-                let mut current_minute: u64 = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs() / 60)
-                    .unwrap_or(0);
 
                 let read_byte_loop = || {
                     let mut byte_buf = [0u8; 1];
@@ -198,6 +201,10 @@ impl SensorDriver {
                             .duration_since(UNIX_EPOCH)
                             .map(|d| d.as_secs() / 60)
                             .unwrap_or(current_minute);
+                        if now_min == initial_minute {
+                            // Initial minute already emitted; skip accumulation.
+                            continue;
+                        }
                         if now_min != current_minute {
                             if count > 0 {
                                 let m = Measurement {
@@ -208,7 +215,7 @@ impl SensorDriver {
                                 event_tx.send(m.into()).unwrap_or_else(|e| {
                                     log::error!("Error sending measurement: {:?}", e);
                                 });
-                            } else {
+                            } else if current_minute != initial_minute {
                                 warn!("No samples in minute {}, skipping emit.", current_minute);
                             }
                             sum_pm1 = 0;
