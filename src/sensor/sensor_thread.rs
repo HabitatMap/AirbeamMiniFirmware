@@ -126,6 +126,11 @@ impl SensorDriver {
             if remaining > Duration::ZERO {
                 thread::sleep(remaining);
             }
+            // PMS active-mode frame rate is slightly faster than 1 Hz, so two
+            // reads occasionally land in the same wall-clock second. Track the
+            // last emitted timestamp and drop duplicates so each second yields
+            // at most one record.
+            let mut last_emitted_ts: u32 = 0;
             if let Ok(uart) = uart_shared.lock() {
                 let _ = uart.clear_rx();
                 let read_byte = || {
@@ -137,6 +142,7 @@ impl SensorDriver {
                 };
                 if let Some(m) = Self::read_uart(read_byte, Duration::from_secs(5)) {
                     info!("Read successful. Sending inital measurement.");
+                    last_emitted_ts = m.timestamp;
                     let _ = event_tx.send(m.into());
                 }
                 if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
@@ -219,6 +225,13 @@ impl SensorDriver {
                     }
 
                     if let Some(measurement) = measurement {
+                        if measurement.timestamp == last_emitted_ts {
+                            // Same wall-clock second as the previous record;
+                            // drop to avoid duplicate timestamps. Next read
+                            // will land in the following second.
+                            continue;
+                        }
+                        last_emitted_ts = measurement.timestamp;
                         event_tx.send(measurement.into()).unwrap_or_else(|e| {
                             log::error!("Error sending measurement: {:?}", e);
                         });
