@@ -106,6 +106,9 @@ fn main() -> anyhow::Result<()> {
 
     let (event_tx, event_rx) = mpsc::channel();
     let sensor = SensorDriver::new(uart);
+    // Kick off PMS warmup in parallel with the rest of boot so the first
+    // measurement after a session starts is available without the 15 s delay.
+    sensor.pre_warm();
     let led_command = start_led_thread(led_pins)?;
     let mut storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs.clone())?;
@@ -134,6 +137,10 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         let _ = led_command.send(LedStates::Idle);
+        // Re-arm warmup for the next session. The previous sensor task (if any)
+        // ended with CMD_SLEEP, so we must wake the sensor again. No-op if a
+        // prior pre_warm is still in flight or already completed.
+        sensor.pre_warm();
         let config = nvs_manager.get_session_config().unwrap_or_else(|e| {
             nvs_manager.clear_session_config();
             error!("Failed to get session config: {:?}", e);

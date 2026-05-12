@@ -21,15 +21,86 @@ const PASSIVE_THRESHOLD: u64 = 3;
 
 const SENSOR_READOUT_TIMEOUT: u32 = 2300; //Longest possible time between the readouts
 
+#[derive(Clone, Copy, Debug)]
+enum WarmupState {
+    Cold,
+    Warming { since: Instant },
+    Warm,
+}
+
 pub struct SensorDriver {
     uart: Arc<Mutex<UartDriver<'static>>>,
+    warmup: Arc<Mutex<WarmupState>>,
 }
 
 impl SensorDriver {
     pub fn new(uart: UartDriver<'static>) -> Self {
         Self {
             uart: Arc::new(Mutex::new(uart)),
+            warmup: Arc::new(Mutex::new(WarmupState::Cold)),
         }
+    }
+
+    /// Kick off PMS warmup in the background so the first measurement is
+    /// available without paying the 15 s wake delay when a session starts.
+    /// Idempotent: a call while already Warming/Warm is a no-op.
+    pub fn pre_warm(&self) {
+        let uart = self.uart.clone();
+        let warmup = self.warmup.clone();
+        thread::spawn(move || {
+            {
+                let mut w = match warmup.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                if !matches!(*w, WarmupState::Cold) {
+                    return;
+                }
+                *w = WarmupState::Warming {
+                    since: Instant::now(),
+                };
+            }
+            if let Ok(uart) = uart.lock() {
+                let _ = uart.clear_rx();
+                uart.write(&CMD_ACTIVE).ok();
+                thread::sleep(Duration::from_millis(100));
+                uart.write(&CMD_WAKE).ok();
+            }
+            thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
+            if let Ok(mut w) = warmup.lock() {
+                if matches!(*w, WarmupState::Warming { .. }) {
+                    *w = WarmupState::Warm;
+                }
+            }
+            info!("Sensor pre-warm: complete.");
+        });
+    }
+
+    fn consume_warmup(
+        uart_shared: &Arc<Mutex<UartDriver<'static>>>,
+        warmup: &Arc<Mutex<WarmupState>>,
+    ) -> Duration {
+        let mut w = match warmup.lock() {
+            Ok(g) => g,
+            Err(_) => return Duration::from_secs(WAKE_UP_SECONDS),
+        };
+        let remaining = match *w {
+            WarmupState::Warm => Duration::ZERO,
+            WarmupState::Warming { since } => {
+                Duration::from_secs(WAKE_UP_SECONDS).saturating_sub(since.elapsed())
+            }
+            WarmupState::Cold => {
+                if let Ok(uart) = uart_shared.lock() {
+                    let _ = uart.clear_rx();
+                    uart.write(&CMD_ACTIVE).ok();
+                    thread::sleep(Duration::from_millis(100));
+                    uart.write(&CMD_WAKE).ok();
+                }
+                Duration::from_secs(WAKE_UP_SECONDS)
+            }
+        };
+        *w = WarmupState::Cold;
+        remaining
     }
 
     pub fn start_sensor_task(&self, period: Duration, event_tx: Sender<LoopEvent>) -> Sender<()> {
@@ -38,9 +109,10 @@ impl SensorDriver {
 
         let (stop_tx, stop_rx) = mpsc::channel();
         let uart_shared = self.uart.clone();
+        let warmup = self.warmup.clone();
 
         if period == Duration::from_secs(60) {
-            return Self::start_fixed_minute_task(uart_shared, event_tx, stop_tx, stop_rx);
+            return Self::start_fixed_minute_task(uart_shared, warmup, event_tx, stop_tx, stop_rx);
         }
 
         let (sleep_time, averaging_time) = Self::get_loop_durations(period);
@@ -48,16 +120,13 @@ impl SensorDriver {
 
         thread::spawn(move || {
             info!("Sensor Thread: Started.");
+            // Sensor wake commands are issued by pre_warm() in the background; here we
+            // only sleep for any remaining settle time before reading the first frame.
+            let remaining = Self::consume_warmup(&uart_shared, &warmup);
+            if remaining > Duration::ZERO {
+                thread::sleep(remaining);
+            }
             if let Ok(uart) = uart_shared.lock() {
-                //wake up sensor for active mode
-
-                //We need to wake up the sensor for active mode,
-                // assumption is that sensor will be in sleep on start
-                let _ = uart.clear_rx();
-                uart.write(&CMD_ACTIVE).ok();
-                thread::sleep(Duration::from_millis(100));
-                uart.write(&CMD_WAKE).ok();
-                thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
                 let _ = uart.clear_rx();
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
@@ -147,18 +216,18 @@ impl SensorDriver {
 
     fn start_fixed_minute_task(
         uart_shared: Arc<Mutex<UartDriver<'static>>>,
+        warmup: Arc<Mutex<WarmupState>>,
         event_tx: Sender<LoopEvent>,
         stop_tx: Sender<()>,
         stop_rx: Receiver<()>,
     ) -> Sender<()> {
         thread::spawn(move || {
             info!("Sensor Thread: Started (fixed-minute mode).");
+            let remaining = Self::consume_warmup(&uart_shared, &warmup);
+            if remaining > Duration::ZERO {
+                thread::sleep(remaining);
+            }
             if let Ok(uart) = uart_shared.lock() {
-                let _ = uart.clear_rx();
-                uart.write(&CMD_ACTIVE).ok();
-                thread::sleep(Duration::from_millis(100));
-                uart.write(&CMD_WAKE).ok();
-                thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
                 let _ = uart.clear_rx();
 
                 let read_byte = || {
