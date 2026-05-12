@@ -180,11 +180,32 @@ impl SensorDriver {
                     if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
                         let _ = uart.write(&CMD_PASSIVE);
                     }
-                    let _ = uart.clear_rx();
+                    // In active mode the PMS streams ~1 Hz; clearing the RX
+                    // buffer here would discard the next pending frame and
+                    // force a fresh ~1 s wait every iteration. Only flush
+                    // when we just woke the sensor or are about to request a
+                    // passive read.
+                    if should_sleep || averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
+                        let _ = uart.clear_rx();
+                    }
 
-                    //for averaging_time <= 3 seconds, we read in active mode
-                    let (measurement, is_stopped) =
-                        Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx);
+                    // Fast path: averaging_time <= 1 s. PMS active-mode
+                    // frame rate is already ~1 Hz, so averaging would only
+                    // double the wall-clock period. Read a single frame.
+                    let (measurement, is_stopped) = if averaging_time
+                        <= Duration::from_secs(1)
+                        && !should_sleep
+                    {
+                        if stop_rx.try_recv().is_ok() {
+                            (None, true)
+                        } else {
+                            let m = Self::read_uart(read_byte, Duration::from_secs(5));
+                            (m, false)
+                        }
+                    } else {
+                        //for averaging_time <= 3 seconds, we read in active mode
+                        Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx)
+                    };
 
                     if is_stopped {
                         break;
