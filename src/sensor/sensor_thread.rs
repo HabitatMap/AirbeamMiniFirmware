@@ -68,7 +68,8 @@ impl SensorDriver {
                     WAKE_UP_SECONDS
                 );
                 thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
-                info!("[fan-diag] T+{:?} warmup done, starting initial read", t0.elapsed());
+                let _ = uart.clear_rx();
+                info!("[fan-diag] T+{:?} warmup done + rx cleared, starting initial read", t0.elapsed());
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
                     match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT) {
@@ -191,7 +192,8 @@ impl SensorDriver {
                     WAKE_UP_SECONDS
                 );
                 thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
-                info!("[fan-diag] T+{:?} warmup done, starting initial read (fixed)", t0.elapsed());
+                let _ = uart.clear_rx();
+                info!("[fan-diag] T+{:?} warmup done + rx cleared, starting initial read (fixed)", t0.elapsed());
 
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
