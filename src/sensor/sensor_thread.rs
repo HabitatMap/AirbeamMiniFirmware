@@ -57,11 +57,11 @@ impl SensorDriver {
                 let t0 = Instant::now();
                 let _ = uart.clear_rx();
                 info!("[fan-diag] T+{:?} clear_rx done", t0.elapsed());
-                let r = uart.write(&CMD_WAKE);
-                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?}", t0.elapsed(), r);
-                thread::sleep(Duration::from_secs(1));
                 let r = uart.write(&CMD_ACTIVE);
                 info!("[fan-diag] T+{:?} CMD_ACTIVE write -> {:?}", t0.elapsed(), r);
+                thread::sleep(Duration::from_millis(100));
+                let r = uart.write(&CMD_WAKE);
+                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?}", t0.elapsed(), r);
                 info!(
                     "[fan-diag] T+{:?} sleeping {}s for warmup",
                     t0.elapsed(),
@@ -180,11 +180,11 @@ impl SensorDriver {
                 let t0 = Instant::now();
                 let _ = uart.clear_rx();
                 info!("[fan-diag] T+{:?} clear_rx done (fixed)", t0.elapsed());
-                let r = uart.write(&CMD_WAKE);
-                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?} (fixed)", t0.elapsed(), r);
-                thread::sleep(Duration::from_secs(1));
                 let r = uart.write(&CMD_ACTIVE);
                 info!("[fan-diag] T+{:?} CMD_ACTIVE write -> {:?} (fixed)", t0.elapsed(), r);
+                thread::sleep(Duration::from_millis(100));
+                let r = uart.write(&CMD_WAKE);
+                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?} (fixed)", t0.elapsed(), r);
                 info!(
                     "[fan-diag] T+{:?} sleeping {}s for warmup (fixed)",
                     t0.elapsed(),
