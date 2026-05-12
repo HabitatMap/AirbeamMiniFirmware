@@ -16,8 +16,9 @@ const CMD_PASSIVE: [u8; 7] = [0x42, 0x4D, 0xE1, 0x00, 0x00, 0x01, 0x70];
 const CMD_READ: [u8; 7] = [0x42, 0x4D, 0xE2, 0x00, 0x00, 0x01, 0x71];
 const CMD_SLEEP: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x00, 0x01, 0x73];
 const CMD_WAKE: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x01, 0x01, 0x74];
-const WAKE_UP_SECONDS: u64 = 10;
+const WAKE_UP_SECONDS: u64 = 15;
 const PASSIVE_THRESHOLD: u64 = 3;
+const INITIAL_FRAME_COUNT: u32 = 3;
 
 const SENSOR_READOUT_TIMEOUT: u32 = 2300; //Longest possible time between the readouts
 
@@ -65,7 +66,9 @@ impl SensorDriver {
                         _ => None,
                     }
                 };
-                if let Some(m) = Self::read_uart(read_byte, Duration::from_secs(5)) {
+                if let Some(m) =
+                    Self::read_initial_avg(read_byte, INITIAL_FRAME_COUNT, Duration::from_secs(5))
+                {
                     info!("Read successful. Sending inital measurement.");
                     let _ = event_tx.send(m.into());
                 }
@@ -166,7 +169,8 @@ impl SensorDriver {
                         _ => None,
                     }
                 };
-                let initial = Self::read_uart(read_byte, Duration::from_secs(5));
+                let initial =
+                    Self::read_initial_avg(read_byte, INITIAL_FRAME_COUNT, Duration::from_secs(5));
                 let mut current_minute: u64 = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs() / 60)
@@ -282,6 +286,40 @@ impl SensorDriver {
         } else {
             (None, stopped)
         }
+    }
+
+    /// Reads up to `n` frames and returns their average. Used for the first emit
+    /// of a session to match the statistical character of subsequent averaged emits.
+    fn read_initial_avg<F>(
+        mut read_byte: F,
+        n: u32,
+        per_frame_timeout: Duration,
+    ) -> Option<Measurement>
+    where
+        F: FnMut() -> Option<[u8; 1]>,
+    {
+        let mut sum_pm1: u32 = 0;
+        let mut sum_pm25: u32 = 0;
+        let mut count: u32 = 0;
+        for _ in 0..n {
+            if let Some(m) = Self::read_uart(&mut read_byte, per_frame_timeout) {
+                sum_pm1 += m.pm1_0_avg as u32;
+                sum_pm25 += m.pm2_5_avg as u32;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            return None;
+        }
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()?
+            .as_secs() as u32;
+        Some(Measurement {
+            pm1_0_avg: (sum_pm1 / count) as u16,
+            pm2_5_avg: (sum_pm25 / count) as u16,
+            timestamp,
+        })
     }
 
     fn read_uart<F>(mut read_byte: F, timeout: Duration) -> Option<Measurement>
