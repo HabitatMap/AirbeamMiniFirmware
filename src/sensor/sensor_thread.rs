@@ -145,16 +145,23 @@ impl SensorDriver {
                     last_emitted_ts = m.timestamp;
                     let _ = event_tx.send(m.into());
                 }
-                if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
-                    let _ = uart.write(&CMD_PASSIVE);
-                } else {
-                    let _ = uart.write(&CMD_ACTIVE);
-                }
-                if should_sleep {
-                    let _ = uart.write(&CMD_SLEEP);
-                    thread::sleep(Duration::from_millis(100));
-                } else {
-                    let _ = uart.write(&CMD_WAKE);
+                // In the 1 s active-mode path the sensor is already awake and
+                // streaming from pre_warm, so re-issuing CMD_ACTIVE/CMD_WAKE
+                // here just stalls the next frame by ~1 s and adds 200 ms of
+                // dead sleep. Only run the mode/wake handshake when we
+                // actually need to switch into passive mode or put the sensor
+                // to sleep.
+                if should_sleep || averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
+                    if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
+                        let _ = uart.write(&CMD_PASSIVE);
+                    } else {
+                        let _ = uart.write(&CMD_ACTIVE);
+                    }
+                    if should_sleep {
+                        let _ = uart.write(&CMD_SLEEP);
+                    } else {
+                        let _ = uart.write(&CMD_WAKE);
+                    }
                     thread::sleep(Duration::from_millis(100));
                 }
             }
