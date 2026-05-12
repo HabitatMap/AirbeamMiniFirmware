@@ -54,11 +54,21 @@ impl SensorDriver {
 
                 //We need to wake up the sensor for active mode,
                 // assumption is that sensor will be in sleep on start
+                let t0 = Instant::now();
                 let _ = uart.clear_rx();
-                uart.write(&CMD_WAKE).ok();
+                info!("[fan-diag] T+{:?} clear_rx done", t0.elapsed());
+                let r = uart.write(&CMD_WAKE);
+                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?}", t0.elapsed(), r);
                 thread::sleep(Duration::from_secs(1));
-                uart.write(&CMD_ACTIVE).ok();
+                let r = uart.write(&CMD_ACTIVE);
+                info!("[fan-diag] T+{:?} CMD_ACTIVE write -> {:?}", t0.elapsed(), r);
+                info!(
+                    "[fan-diag] T+{:?} sleeping {}s for warmup",
+                    t0.elapsed(),
+                    WAKE_UP_SECONDS
+                );
                 thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
+                info!("[fan-diag] T+{:?} warmup done, starting initial read", t0.elapsed());
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
                     match uart.read(&mut byte_buf, SENSOR_READOUT_TIMEOUT) {
@@ -69,19 +79,30 @@ impl SensorDriver {
                 if let Some(m) =
                     Self::read_initial_avg(read_byte, INITIAL_FRAME_COUNT, Duration::from_secs(5))
                 {
-                    info!("Read successful. Sending inital measurement.");
+                    info!(
+                        "[fan-diag] T+{:?} initial read OK pm1={} pm2_5={}",
+                        t0.elapsed(),
+                        m.pm1_0_avg,
+                        m.pm2_5_avg
+                    );
                     let _ = event_tx.send(m.into());
+                } else {
+                    info!("[fan-diag] T+{:?} initial read returned None", t0.elapsed());
                 }
                 if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
-                    let _ = uart.write(&CMD_PASSIVE);
+                    let r = uart.write(&CMD_PASSIVE);
+                    info!("[fan-diag] T+{:?} CMD_PASSIVE write -> {:?}", t0.elapsed(), r);
                 } else {
-                    let _ = uart.write(&CMD_ACTIVE);
+                    let r = uart.write(&CMD_ACTIVE);
+                    info!("[fan-diag] T+{:?} CMD_ACTIVE(post-warmup) write -> {:?}", t0.elapsed(), r);
                 }
                 if should_sleep {
-                    let _ = uart.write(&CMD_SLEEP);
+                    let r = uart.write(&CMD_SLEEP);
+                    info!("[fan-diag] T+{:?} CMD_SLEEP write -> {:?}", t0.elapsed(), r);
                     thread::sleep(Duration::from_millis(100));
                 } else {
-                    let _ = uart.write(&CMD_WAKE);
+                    let r = uart.write(&CMD_WAKE);
+                    info!("[fan-diag] T+{:?} CMD_WAKE(post-warmup) write -> {:?}", t0.elapsed(), r);
                     thread::sleep(Duration::from_millis(100));
                 }
             }
@@ -156,11 +177,21 @@ impl SensorDriver {
         thread::spawn(move || {
             info!("Sensor Thread: Started (fixed-minute mode).");
             if let Ok(uart) = uart_shared.lock() {
+                let t0 = Instant::now();
                 let _ = uart.clear_rx();
-                uart.write(&CMD_WAKE).ok();
+                info!("[fan-diag] T+{:?} clear_rx done (fixed)", t0.elapsed());
+                let r = uart.write(&CMD_WAKE);
+                info!("[fan-diag] T+{:?} CMD_WAKE write -> {:?} (fixed)", t0.elapsed(), r);
                 thread::sleep(Duration::from_secs(1));
-                uart.write(&CMD_ACTIVE).ok();
+                let r = uart.write(&CMD_ACTIVE);
+                info!("[fan-diag] T+{:?} CMD_ACTIVE write -> {:?} (fixed)", t0.elapsed(), r);
+                info!(
+                    "[fan-diag] T+{:?} sleeping {}s for warmup (fixed)",
+                    t0.elapsed(),
+                    WAKE_UP_SECONDS
+                );
                 thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
+                info!("[fan-diag] T+{:?} warmup done, starting initial read (fixed)", t0.elapsed());
 
                 let read_byte = || {
                     let mut byte_buf = [0u8; 1];
@@ -177,9 +208,16 @@ impl SensorDriver {
                     .unwrap_or(0);
                 let initial_minute = current_minute;
                 if let Some(mut m) = initial {
-                    info!("Read successful. Sending initial measurement.");
+                    info!(
+                        "[fan-diag] T+{:?} initial read OK pm1={} pm2_5={} (fixed)",
+                        t0.elapsed(),
+                        m.pm1_0_avg,
+                        m.pm2_5_avg
+                    );
                     m.timestamp = (current_minute * 60) as u32;
                     let _ = event_tx.send(m.into());
+                } else {
+                    info!("[fan-diag] T+{:?} initial read returned None (fixed)", t0.elapsed());
                 }
 
                 let mut sum_pm1: u32 = 0;
