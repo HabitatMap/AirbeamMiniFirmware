@@ -20,6 +20,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use crate::storage::storage_iterator::MeasurementIter;
 
 const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
@@ -159,15 +160,17 @@ impl BleManager {
     }
 
     /// Run the setup handshake. Blocks the calling thread until a config is obtained.
-    pub fn run_setup<F0, F1, F2, F3, W>(
+    pub fn run_setup<F0, F1, F2, F3, F4, F5, W>(
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
         file_size: u64,
         mut battery_level: F0,
         clear_storage: F1,
-        start_sync: F2,
-        stop_sync: F3,
+        start_wifi_sync: F2,
+        stop_wifi_sync: F3,
+        get_measurements_iter: F4,
+        delete_measurements: F5,
         connect_to_wifi: W,
         led_command: Sender<LedStates>,
     ) -> anyhow::Result<SetupResult>
@@ -176,6 +179,8 @@ impl BleManager {
         F1: Fn() -> anyhow::Result<()>,
         F2: Fn() -> anyhow::Result<Receiver<SyncStatus>>,
         F3: Fn(),
+        F4: Fn() -> Option<MeasurementIter>,
+        F5: Fn(usize) -> anyhow::Result<()>,
         W: Fn(&str, &str) -> anyhow::Result<()>,
     {
         //reconnect wifi on fixed session after timeout
@@ -242,9 +247,9 @@ impl BleManager {
                     }
                 }
 
-                AppCommand::StartSync => {
+                AppCommand::StartWiFiSync => {
                     self.send_response(DeviceResponse::Ack)?;
-                    match start_sync() {
+                    match start_wifi_sync() {
                         Ok(status) => {
                             // Server is owned by WifiManager so BLE drops here do not
                             // tear it down — the in-flight /sync TCP stream survives.
@@ -262,7 +267,7 @@ impl BleManager {
                                     }
                                 }
                             }
-                            stop_sync();
+                            stop_wifi_sync();
                             let _ = led_command.send(LedStates::BleConnected);
                             let _ = self.send_response(DeviceResponse::Ready);
                         }
@@ -271,6 +276,38 @@ impl BleManager {
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }
                     }
+                },
+
+                AppCommand::StartBleSync => {
+                    self.send_response(DeviceResponse::Ack)?;
+                    self.notify_status(&DeviceStatus::ReadyToSync {file_size, password: "".to_string() })?;
+                    std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
+                    let measurements_iter = get_measurements_iter().unwrap();
+                    let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
+                    for line in measurements_iter {
+                        let new = line.measurements;
+                        if new.len() + measurements.len() > 30 {
+                            if let Err(_) = self.send_measurements(&measurements) {
+                                self.send_response(DeviceResponse::Nack(ErrorCode::SyncFailed))?;
+                                break;
+                            } else {
+                                let _ = delete_measurements(measurements.len());
+
+                            }
+                            measurements.clear();
+                        }
+                        measurements.extend(new);
+                    }
+                    if !measurements.is_empty() {
+                        if self.send_measurements(&measurements).is_err() {
+                            self.send_response(DeviceResponse::Nack(ErrorCode::SyncFailed))?;
+                        } else {
+                            if clear_storage().is_err() {
+                                self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?;
+                            };
+                        }
+                    }
+                    self.send_response(DeviceResponse::Ready)?;
                 }
 
                 AppCommand::NewSessionConfig(config) => {

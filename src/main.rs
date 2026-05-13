@@ -148,6 +148,8 @@ fn main() -> anyhow::Result<()> {
             || storage.clear_measurements(),
             || wifi_manager.manual_sync(),
             || wifi_manager.cancel_manual_sync(),
+            || storage.iter_measurements(),
+            |to_remove| storage.remove_last(to_remove),
             |ssid, password| wifi_manager.connect(ssid, password),
             led_command.clone(),
         )?;
@@ -275,9 +277,9 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    LoopEvent::Stop { start_sync } => {
+                    LoopEvent::Stop { start_wifi_sync, start_ble_sync } => {
                         let _ = stop_tx.send(());
-                        if start_sync {
+                        if start_wifi_sync {
                             let sync_status = wifi_manager.manual_sync()?;
                             loop {
                                 match sync_status.recv()? {
@@ -297,6 +299,42 @@ fn main() -> anyhow::Result<()> {
                                 let _ = ble.send_response(DeviceResponse::Ready);
                             }
                         }
+                        if start_ble_sync {
+                            let file_size = storage.get_file_size().unwrap_or(1);
+                            let _ = ble.notify_status(&DeviceStatus::ReadyToSync {
+                                file_size,
+                                password: "".to_string(),
+                            });
+                            std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
+                            let measurements_iter = storage.iter_measurements().unwrap();
+                            let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
+                            for line in measurements_iter {
+                                let new = line.measurements;
+                                if new.len() + measurements.len() > 30 {
+                                    if let Err(_) = ble.send_measurements(&measurements) {
+                                        ble.send_response(DeviceResponse::Nack(ErrorCode::SyncFailed))?;
+                                        break;
+                                    } else {
+                                        let _ = storage.remove_last(measurements.len());
+
+                                    }
+                                    measurements.clear();
+                                }
+                                measurements.extend(new);
+                            }
+                            if !measurements.is_empty() {
+                                if ble.send_measurements(&measurements).is_err() {
+                                    ble.send_response(DeviceResponse::Nack(ErrorCode::SyncFailed))?;
+                                } else {
+                                    if storage.clear_measurements().is_err() {
+                                        ble.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?;
+                                    };
+                                }
+                            }
+                            ble.send_response(DeviceResponse::Ready)?;
+                        }
+                        
+                        
                         info!("Stopping");
                         let _ = storage.clear_measurements();
                         nvs_manager.clear_session_config();
@@ -316,7 +354,7 @@ fn main() -> anyhow::Result<()> {
 pub enum LoopEvent {
     TimeUpdate(i64),
     Measurement(Measurement),
-    Stop { start_sync: bool },
+    Stop { start_wifi_sync: bool, start_ble_sync: bool },
 }
 
 #[derive(Debug)]
