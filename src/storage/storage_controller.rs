@@ -112,7 +112,10 @@ impl StorageManager {
         }
     }
     pub fn has_measurements(&self) -> bool {
-        let _guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap();
+        if !guard.buffer.is_empty() {
+            return true;
+        }
 
         match std::fs::metadata(FILE_PATH) {
             Ok(metadata) => metadata.len() > 0,
