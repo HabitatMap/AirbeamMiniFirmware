@@ -146,6 +146,17 @@ impl Iterator for MeasurementIter {
             }
             let cursor_in_buf = (self.cursor - self.buf_file_start) as usize;
 
+            // Ensure full MAX_LINE_SIZE window is in buffer before scanning,
+            // otherwise a block straddling the left edge gets missed and the
+            // resync byte-walk skips past it.
+            if cursor_in_buf < MAX_LINE_SIZE && self.buf_file_start > 0 {
+                if !self.extend_left() {
+                    self.done = true;
+                    return None;
+                }
+                continue;
+            }
+
             let scan_lo = cursor_in_buf.saturating_sub(MAX_LINE_SIZE);
             let scan_hi = cursor_in_buf.saturating_sub(MIN_LINE_SIZE);
 
