@@ -9,10 +9,11 @@ pub const SENSOR_INFO: &str = "PM1,μg/m3;PM2.5,μg/m3";
 pub enum AppCommand {
     ContinueSession,                 // 0x10
     DiscardSession,                  // 0x11 (end session without syncing)
-    StartSync,                       // 0x12 (end session when running)
+    StartWiFiSync,                   // 0x12 (end session when running)
     NewSessionConfig(SessionConfig), // 0x13 + 16B - uuid + u16 interval + u8 session_type (optional: + u8 pm1 index + u8 pm2 index + 32B wifi_ssid + 64B wifi_pass)
     GetSensors,                      // 0x14
     SetTime(i64),                    // 0x15 + i64
+    StartBleSync,                    // 0x16 (BLE only)
 }
 
 impl AppCommand {
@@ -20,7 +21,7 @@ impl AppCommand {
         match *data.first()? {
             0x10 => Some(Self::ContinueSession),
             0x11 => Some(Self::DiscardSession),
-            0x12 => Some(Self::StartSync),
+            0x12 => Some(Self::StartWiFiSync),
             0x13 if data.len() >= 19 => {
                 let uuid = Uuid::from_slice_le(&data[1..17]).ok()?;
                 let interval_seconds = u16::from_le_bytes(data[17..19].try_into().ok()?);
@@ -77,8 +78,9 @@ impl AppCommand {
     pub fn as_loop_event(&self) -> Option<LoopEvent> {
         match self {
             AppCommand::SetTime(time) => Some(LoopEvent::TimeUpdate(*time)),
-            AppCommand::DiscardSession => Some(LoopEvent::Stop { start_sync: false }),
-            AppCommand::StartSync => Some(LoopEvent::Stop { start_sync: true }),
+            AppCommand::DiscardSession => Some(LoopEvent::Stop { start_wifi_sync: false, start_ble_sync: false }),
+            AppCommand::StartWiFiSync => Some(LoopEvent::Stop { start_wifi_sync: true, start_ble_sync: false }),
+            AppCommand::StartBleSync => Some(LoopEvent::Stop { start_wifi_sync: false, start_ble_sync: true }),
             _ => None,
         }
     }
@@ -185,4 +187,5 @@ pub enum ErrorCode {
     StorageHasMeasurements = 0x03,
     ClearStorageFailed = 0x04,
     InvalidWifiCredentials = 0x05,
+    SyncFailed = 0x06,
 }
