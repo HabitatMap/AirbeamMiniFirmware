@@ -4,6 +4,7 @@ use crate::ble::ble_protocol::{AppCommand, DeviceResponse, DeviceStatus, ErrorCo
 use crate::led::led_thread::LedStates;
 use crate::sensor::measurement::Measurement;
 use crate::storage::session_config::{SessionConfig, SessionType};
+use crate::storage::storage_iterator::MeasurementIter;
 use crate::wifi::wifi_manager::SyncStatus;
 use crate::{LoopEvent, SendingError};
 use esp32_nimble::enums::AuthReq;
@@ -20,7 +21,6 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
-use crate::storage::storage_iterator::MeasurementIter;
 
 const FW_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SERVICE_UUID: BleUuid = uuid128!("a0e1f000-0001-4b3c-8e9a-1f2d3c4b5a60");
@@ -276,11 +276,14 @@ impl BleManager {
                             self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?
                         }
                     }
-                },
+                }
 
                 AppCommand::StartBleSync => {
                     self.send_response(DeviceResponse::Ack)?;
-                    self.notify_status(&DeviceStatus::ReadyToSync {file_size, password: "".to_string() })?;
+                    self.notify_status(&DeviceStatus::ReadyToSync {
+                        file_size,
+                        password: "".to_string(),
+                    })?;
                     std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                     let measurements_iter = get_measurements_iter().unwrap();
                     let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
@@ -292,7 +295,6 @@ impl BleManager {
                                 break;
                             } else {
                                 let _ = delete_measurements(measurements.len());
-
                             }
                             measurements.clear();
                         }
@@ -303,7 +305,9 @@ impl BleManager {
                             self.send_response(DeviceResponse::Nack(ErrorCode::SyncFailed))?;
                         } else {
                             if clear_storage().is_err() {
-                                self.send_response(DeviceResponse::Nack(ErrorCode::ClearStorageFailed))?;
+                                self.send_response(DeviceResponse::Nack(
+                                    ErrorCode::ClearStorageFailed,
+                                ))?;
                             };
                         }
                     }

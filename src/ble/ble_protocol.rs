@@ -78,9 +78,18 @@ impl AppCommand {
     pub fn as_loop_event(&self) -> Option<LoopEvent> {
         match self {
             AppCommand::SetTime(time) => Some(LoopEvent::TimeUpdate(*time)),
-            AppCommand::DiscardSession => Some(LoopEvent::Stop { start_wifi_sync: false, start_ble_sync: false }),
-            AppCommand::StartWiFiSync => Some(LoopEvent::Stop { start_wifi_sync: true, start_ble_sync: false }),
-            AppCommand::StartBleSync => Some(LoopEvent::Stop { start_wifi_sync: false, start_ble_sync: true }),
+            AppCommand::DiscardSession => Some(LoopEvent::Stop {
+                start_wifi_sync: false,
+                start_ble_sync: false,
+            }),
+            AppCommand::StartWiFiSync => Some(LoopEvent::Stop {
+                start_wifi_sync: true,
+                start_ble_sync: false,
+            }),
+            AppCommand::StartBleSync => Some(LoopEvent::Stop {
+                start_wifi_sync: false,
+                start_ble_sync: true,
+            }),
             _ => None,
         }
     }
