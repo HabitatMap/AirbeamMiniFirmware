@@ -262,6 +262,9 @@ fn main() -> anyhow::Result<()> {
                                 break;
                             }
                             let _ = storage.save_measurement(m);
+                            if let SessionType::FIXED { .. } = config.session_type {
+                                let _ = storage.flush();
+                            }
                         } else {
                             if ble.is_connected() {
                                 let _ = ble.send_response(DeviceResponse::Ready);
