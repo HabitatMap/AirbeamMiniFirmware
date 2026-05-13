@@ -194,9 +194,7 @@ impl SensorDriver {
                     if stop_rx.try_recv().is_ok() {
                         break;
                     }
-                    if let Some(frame) =
-                        Self::read_uart(read_byte_loop, Duration::from_secs(5))
-                    {
+                    if let Some(frame) = Self::read_uart(read_byte_loop, Duration::from_secs(5)) {
                         let now_min = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map(|d| d.as_secs() / 60)

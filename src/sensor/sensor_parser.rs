@@ -14,14 +14,10 @@ pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     if checksum_received != checksum_calculated {
         return None;
     }
-    
+
     let c03 = BigEndian::read_u16(&buffer[16..18]);
     let c05 = BigEndian::read_u16(&buffer[18..20]);
     let c10 = BigEndian::read_u16(&buffer[20..22]);
 
-    Some(PmsMeasurement {
-        c03,
-        c05,
-        c10,
-    })
+    Some(PmsMeasurement { c03, c05, c10 })
 }
