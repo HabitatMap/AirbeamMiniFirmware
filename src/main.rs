@@ -35,7 +35,7 @@ use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, info};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
@@ -237,6 +237,7 @@ fn main() -> anyhow::Result<()> {
         }
         let _ = led_command.send(LedStates::Running);
         let mut low_bat_flag = false;
+        let mut last_wifi_reconnect: Option<Instant> = None;
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
 
@@ -352,6 +353,21 @@ fn main() -> anyhow::Result<()> {
                         nvs_manager.clear_session_config();
                         break;
                     }
+                }
+            }
+
+            if let SessionType::FIXED {
+                wifi_ssid,
+                wifi_password,
+                ..
+            } = &config.session_type
+            {
+                if !connected()
+                    && last_wifi_reconnect
+                        .map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
+                {
+                    last_wifi_reconnect = Some(Instant::now());
+                    let _ = wifi_manager.connect(wifi_ssid, wifi_password);
                 }
             }
 
