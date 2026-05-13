@@ -72,6 +72,7 @@ impl AppCommand {
                 let epoch = i64::from_le_bytes(data[1..9].try_into().ok()?);
                 Some(Self::SetTime(epoch))
             }
+            0x16 => Some(Self::StartBleSync),
             _ => None,
         }
     }
