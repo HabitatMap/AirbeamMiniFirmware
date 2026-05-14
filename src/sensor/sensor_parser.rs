@@ -3,7 +3,6 @@ use byteorder::{BigEndian, ByteOrder};
 #[derive(Debug, Default, Clone)]
 pub struct PmsMeasurement {
     pub(crate) c03: u16,
-    c05: u16,
     pub(crate) c10: u16,
 }
 pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
@@ -16,8 +15,7 @@ pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     }
 
     let c03 = BigEndian::read_u16(&buffer[16..18]);
-    let c05 = BigEndian::read_u16(&buffer[18..20]);
     let c10 = BigEndian::read_u16(&buffer[20..22]);
 
-    Some(PmsMeasurement { c03, c05, c10 })
+    Some(PmsMeasurement { c03, c10 })
 }
