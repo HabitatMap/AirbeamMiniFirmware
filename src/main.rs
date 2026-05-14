@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
         let result = ble.run_setup(
             config,
             storage.has_measurements(),
-            storage.get_file_size().unwrap_or(1),
+            storage.get_file_size(),
             || batt.read(&adc, &mut vbat_pin).signed_percent,
             || storage.clear_measurements(),
             || wifi_manager.manual_sync(),
