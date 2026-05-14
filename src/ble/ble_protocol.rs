@@ -136,6 +136,7 @@ pub enum DeviceStatus {
         battery_level: i8,
         session: Uuid,
         has_measurements: bool,
+        file_size: u64,
     },
     Running {
         battery_level: i8,
@@ -159,12 +160,14 @@ impl DeviceStatus {
                 battery_level,
                 session,
                 has_measurements,
+                file_size,
             } => {
                 buf[0] = 0x01;
                 buf[1] = *battery_level as u8;
                 buf[2..18].copy_from_slice(&session.to_bytes_le());
                 buf[18] = *has_measurements as u8;
-                19
+                buf[19..27].copy_from_slice(&file_size.to_le_bytes());
+                27
             }
             Self::Running {
                 battery_level,

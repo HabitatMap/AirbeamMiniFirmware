@@ -164,7 +164,7 @@ impl BleManager {
         &mut self,
         saved_config: Option<SessionConfig>,
         has_measurements: bool,
-        file_size: u64,
+        file_size: Option<u64>,
         mut battery_level: F0,
         clear_storage: F1,
         start_wifi_sync: F2,
@@ -207,6 +207,7 @@ impl BleManager {
                 battery_level: battery_level(),
                 session: config.session_uuid,
                 has_measurements,
+                file_size: if has_measurements { file_size.unwrap_or(0) } else { 0 },
             }
         } else {
             DeviceStatus::Idle(battery_level())
@@ -257,7 +258,7 @@ impl BleManager {
                                 match status.recv()? {
                                     SyncStatus::Ready { password } => {
                                         self.notify_status(&DeviceStatus::ReadyToSync {
-                                            file_size,
+                                            file_size: file_size.unwrap_or(1),
                                             password,
                                         })?
                                     }
@@ -281,7 +282,7 @@ impl BleManager {
                 AppCommand::StartBleSync => {
                     self.send_response(DeviceResponse::Ack)?;
                     self.notify_status(&DeviceStatus::ReadyToSync {
-                        file_size,
+                        file_size: file_size.unwrap_or(1),
                         password: "".to_string(),
                     })?;
                     std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
@@ -469,7 +470,7 @@ impl BleManager {
     }
 
     pub fn notify_status(&self, status: &DeviceStatus) -> anyhow::Result<()> {
-        let mut buf = [0u8; 20];
+        let mut buf = [0u8; 32];
         let len = status.encode(&mut buf);
         self.status_chr.lock().set_value(&buf[..len]).notify();
         Ok(())
