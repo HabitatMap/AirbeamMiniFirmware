@@ -10,7 +10,7 @@ use crate::autosync::sync_from_storage;
 use crate::battery::BatteryMonitor;
 use crate::ble::ble_protocol::{DeviceResponse, DeviceStatus, ErrorCode};
 use crate::ble::SetupResult;
-use crate::led::led_thread::{start_led_thread, LedPins, LedStates};
+use crate::led::led_thread::{start_led_thread, LedPins, LedEvent};
 use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_thread::SensorDriver;
 use crate::storage::nvs_manager::NvsManager;
@@ -136,7 +136,7 @@ fn main() -> anyhow::Result<()> {
     );
 
     loop {
-        let _ = led_command.send(LedStates::Idle);
+        let _ = led_command.send(LedEvent::Idle);
         // Re-arm warmup for the next session. The previous sensor task (if any)
         // ended with CMD_SLEEP, so we must wake the sensor again. No-op if a
         // prior pre_warm is still in flight or already completed.
@@ -235,20 +235,29 @@ fn main() -> anyhow::Result<()> {
         if let SessionType::MOBILE = config.session_type {
             wifi_manager.disconnect();
         }
-        let _ = led_command.send(LedStates::Running);
+        let is_fixed = matches!(config.session_type, SessionType::FIXED { .. });
         let mut low_bat_flag = false;
         let mut last_wifi_reconnect: Option<Instant> = None;
+        let mut last_ble_connected = ble.is_connected();
+        
+        let _ = led_command.send(LedEvent::SessionStarted { is_fixed });
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
+
+            let current_ble_connected = ble.is_connected();
+            if current_ble_connected != last_ble_connected {
+                last_ble_connected = current_ble_connected;
+                let _ = led_command.send(LedEvent::UpdateBleState(current_ble_connected));
+            }
 
             let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
 
             if (-20..=20).contains(&battery) && !low_bat_flag {
-                let _ = led_command.send(LedStates::LowBattery);
                 low_bat_flag = true;
+                let _ = led_command.send(LedEvent::UpdateBattery(true));
             } else if !(-25..=25).contains(&battery) && low_bat_flag {
-                let _ = led_command.send(LedStates::Running);
                 low_bat_flag = false;
+                let _ = led_command.send(LedEvent::UpdateBattery(false));
             }
 
             if let Ok(event) = event {
@@ -265,6 +274,7 @@ fn main() -> anyhow::Result<()> {
                             if let SessionType::FIXED { .. } = config.session_type {
                                 let _ = storage.flush();
                             }
+                            // LED update handled by 100ms poll
                         } else {
                             if ble.is_connected() {
                                 let _ = ble.send_response(DeviceResponse::Ready);
@@ -294,6 +304,7 @@ fn main() -> anyhow::Result<()> {
                     } => {
                         let _ = stop_tx.send(());
                         if start_wifi_sync {
+                            let _ = led_command.send(LedEvent::SyncStarted);
                             let sync_status = wifi_manager.manual_sync()?;
                             loop {
                                 match sync_status.recv()? {
@@ -319,7 +330,7 @@ fn main() -> anyhow::Result<()> {
                                 file_size,
                                 password: "".to_string(),
                             });
-                            std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
+                            thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                             let measurements_iter = storage.iter_measurements().unwrap();
                             let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
                             for line in measurements_iter {
@@ -365,10 +376,7 @@ fn main() -> anyhow::Result<()> {
                 ..
             } = &config.session_type
             {
-                if !connected()
-                    && last_wifi_reconnect
-                        .map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
-                {
+                if !connected() && last_wifi_reconnect.map_or(true, |t| t.elapsed() >= Duration::from_secs(30)) {
                     last_wifi_reconnect = Some(Instant::now());
                     let _ = wifi_manager.connect(wifi_ssid, wifi_password);
                 }
