@@ -43,7 +43,8 @@ pub struct BleManager {
     measurement_chr: Arc<NimbleMutex<BLECharacteristic>>,
     sync_chr: Arc<NimbleMutex<BLECharacteristic>>,
     //channels for BLE data
-    notify_status: std::sync::mpsc::Receiver<NotifyTxStatus>,
+    notify_status_measurement: std::sync::mpsc::Receiver<NotifyTxStatus>,
+    notify_status_sync: std::sync::mpsc::Receiver<NotifyTxStatus>,
     cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
     // keep server alive
     _ble_device: &'static BLEDevice,
@@ -52,7 +53,9 @@ pub struct BleManager {
 impl BleManager {
     pub fn new(device_name: &str, event_tx: Sender<LoopEvent>) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
-        let (notify_status_tx, notify_status_rx) = std::sync::mpsc::channel();
+        let (notify_status_measurement_tx, notify_status_measurement_rx) =
+            std::sync::mpsc::channel();
+        let (notify_status_sync_tx, notify_status_sync_rx) = std::sync::mpsc::channel();
         // ── 1. Get the NimBLE singleton ──────────────────────────────────
         let ble_device = BLEDevice::take();
         ble_device.security().set_auth(AuthReq::Bond).resolve_rpa();
@@ -111,19 +114,19 @@ impl BleManager {
         let measurement_chr = service
             .lock()
             .create_characteristic(MEASUREMENT_CHAR_UUID, NimbleProperties::INDICATE);
-        let clone_notify_status_tx = notify_status_tx.clone();
+        let clone_meas_tx = notify_status_measurement_tx.clone();
         measurement_chr.lock().on_notify_tx(move |tx| {
             let status = tx.status();
-            let _ = clone_notify_status_tx.send(status);
+            let _ = clone_meas_tx.send(status);
         });
 
         let sync_chr = service
             .lock()
             .create_characteristic(SYNC_CHAR_UUID, NimbleProperties::INDICATE);
-        let clone_notify_status_tx = notify_status_tx.clone();
+        let clone_sync_tx = notify_status_sync_tx.clone();
         sync_chr.lock().on_notify_tx(move |tx| {
             let status = tx.status();
-            let _ = clone_notify_status_tx.send(status);
+            let _ = clone_sync_tx.send(status);
         });
 
         // Response: notify-only (device → app for ack/nack/sync chunks)
@@ -153,7 +156,8 @@ impl BleManager {
             response_chr,
             measurement_chr,
             sync_chr,
-            notify_status: notify_status_rx,
+            notify_status_measurement: notify_status_measurement_rx,
+            notify_status_sync: notify_status_sync_rx,
             cmd_rx,
             _ble_device: ble_device,
         })
@@ -404,7 +408,12 @@ impl BleManager {
     }
 
     fn indicate_measurement_chr(&self, buf: &[u8], is_sync: bool) -> Result<(), SendingError> {
-        while self.notify_status.try_recv().is_ok() {} //empty notify chanel in case of old status
+        let rx = if is_sync {
+            &self.notify_status_sync
+        } else {
+            &self.notify_status_measurement
+        };
+        while rx.try_recv().is_ok() {} //empty notify chanel in case of old status
 
         if is_sync {
             self.sync_chr.lock().set_value(buf).notify();
@@ -412,7 +421,7 @@ impl BleManager {
             self.measurement_chr.lock().set_value(buf).notify();
         }
 
-        if let Ok(status) = self.notify_status.recv_timeout(Duration::from_secs(1)) {
+        if let Ok(status) = rx.recv_timeout(Duration::from_secs(1)) {
             match status {
                 NotifyTxStatus::SuccessIndicate => Ok(()),
                 NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
