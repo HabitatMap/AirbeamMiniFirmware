@@ -421,7 +421,7 @@ impl BleManager {
             self.measurement_chr.lock().set_value(buf).notify();
         }
 
-        if let Ok(status) = rx.recv_timeout(Duration::from_secs(1)) {
+        if let Ok(status) = rx.recv_timeout(Duration::from_secs(3)) {
             match status {
                 NotifyTxStatus::SuccessIndicate => Ok(()),
                 NotifyTxStatus::ErrorNoClient => Err(SendingError::ConnectionError),
