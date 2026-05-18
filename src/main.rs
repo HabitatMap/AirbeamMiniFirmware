@@ -252,7 +252,8 @@ fn main() -> anyhow::Result<()> {
             }
 
             let now_connected = connected();
-            if now_connected && !was_connected {
+            let is_mobile = matches!(config.session_type, SessionType::MOBILE);
+            if is_mobile && now_connected && !was_connected {
                 reconnect_until = Some(Instant::now() + Duration::from_secs(120));
             }
             was_connected = now_connected;
@@ -264,6 +265,8 @@ fn main() -> anyhow::Result<()> {
 
             let desired = if low_bat_flag {
                 LedStates::LowBattery
+            } else if !is_mobile {
+                LedStates::Off
             } else if reconnect_until.is_some() {
                 LedStates::Reconnected
             } else if now_connected {
@@ -350,6 +353,8 @@ fn main() -> anyhow::Result<()> {
                                 file_size,
                                 password: "".to_string(),
                             });
+                            let _ = led_command.send(LedStates::BleSync);
+                            current_led = Some(LedStates::BleSync);
                             std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                             let measurements_iter = storage.iter_measurements().unwrap();
                             let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
