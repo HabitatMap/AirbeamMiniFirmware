@@ -118,16 +118,7 @@ fn main() -> anyhow::Result<()> {
     let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
     let wifi_manager = WifiManager::new(blocking);
 
-    unsafe {
-        let pm = esp_pm_config_t {
-            max_freq_mhz: 160,
-            min_freq_mhz: 40,
-            light_sleep_enable: true,
-        };
-        esp!(esp_pm_configure(
-            &pm as *const _ as *const core::ffi::c_void
-        ))?;
-    }
+    let _ = max_cpu_freq();
 
     info!(
         "Startup complete!, AirBeamMini MAC: {}, Version: {}",
@@ -163,7 +154,7 @@ fn main() -> anyhow::Result<()> {
         info!("BLE setup result: {:?}", result);
 
         let config = if let SetupResult::StartNew(config) = &result {
-            nvs_manager.set_session_config(&config)?;
+            nvs_manager.set_session_config(config)?;
             config
         } else {
             &nvs_manager.get_session_config()?.unwrap()
@@ -184,9 +175,9 @@ fn main() -> anyhow::Result<()> {
 
         let send_measurements = |measurements: &[Measurement]| -> Result<(), SendingError> {
             match &config.session_type {
-                SessionType::MOBILE => ble.send_measurements(&measurements),
+                SessionType::MOBILE => ble.send_measurements(measurements),
                 _ => wifi_manager.send_measurements(
-                    &measurements,
+                    measurements,
                     domain.as_str(),
                     config.clone(),
                     event_tx.clone(),
@@ -248,10 +239,10 @@ fn main() -> anyhow::Result<()> {
             };
         let mut current_led: Option<LedStates> = None;
         let mut last_wifi_reconnect: Option<Instant> = None;
+        let mut battery = 100_i8;
+        let _ = slow_cpu_freq();
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
-
-            let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
 
             if (-20..=20).contains(&battery) && !low_bat_flag {
                 low_bat_flag = true;
@@ -309,6 +300,7 @@ fn main() -> anyhow::Result<()> {
                             }
                         } else {
                             if ble.is_connected() {
+                                battery = batt.read(&adc, &mut vbat_pin).signed_percent;
                                 let _ = ble.send_response(DeviceResponse::Ready);
                                 if let SessionType::FIXED { .. } = config.session_type {
                                     ble.stop()
@@ -334,6 +326,7 @@ fn main() -> anyhow::Result<()> {
                         start_wifi_sync,
                         start_ble_sync,
                     } => {
+                        let _ = max_cpu_freq();
                         let _ = stop_tx.send(());
                         if start_wifi_sync {
                             let sync_status = wifi_manager.manual_sync()?;
@@ -440,4 +433,32 @@ enum SendingError {
     ConnectionError,
     Retry,
     Overflow,
+}
+
+fn max_cpu_freq() -> anyhow::Result<()> {
+    unsafe {
+        let pm = esp_pm_config_t {
+            max_freq_mhz: 160,
+            min_freq_mhz: 40,
+            light_sleep_enable: true,
+        };
+        esp!(esp_pm_configure(
+            &pm as *const _ as *const core::ffi::c_void
+        ))?;
+    }
+    Ok(())
+}
+
+fn slow_cpu_freq() -> anyhow::Result<()> {
+    unsafe {
+        let pm = esp_pm_config_t {
+            max_freq_mhz: 80,
+            min_freq_mhz: 40,
+            light_sleep_enable: true,
+        };
+        esp!(esp_pm_configure(
+            &pm as *const _ as *const core::ffi::c_void
+        ))?;
+    }
+    Ok(())
 }
