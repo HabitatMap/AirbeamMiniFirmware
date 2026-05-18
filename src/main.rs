@@ -7,7 +7,7 @@ mod storage;
 mod wifi;
 
 use crate::autosync::sync_from_storage;
-use crate::battery::BatteryMonitor;
+use crate::battery::{enter_low_battery_deep_sleep, BatteryMonitor};
 use crate::ble::ble_protocol::{DeviceResponse, DeviceStatus, ErrorCode};
 use crate::ble::SetupResult;
 use crate::led::led_thread::{start_led_thread, LedPins, LedStates};
@@ -89,6 +89,25 @@ fn main() -> anyhow::Result<()> {
 
     // Battery monitor owns the USB sense pin
     let mut batt = BatteryMonitor::new(peripherals.pins.gpio4)?;
+
+    // Boot-time low-battery guard: prime the filter with a few quick reads, then
+    // refuse to start the firmware if the battery is below the boot threshold and
+    // USB is not connected. Sleep until USB plug-in (GPIO4 high) or a 5-minute
+    // timer — whichever comes first.
+    let boot_battery = {
+        let mut last = batt.read(&adc, &mut vbat_pin);
+        for _ in 0..4 {
+            last = batt.read(&adc, &mut vbat_pin);
+        }
+        last
+    };
+    if boot_battery.is_below_boot_threshold() {
+        info!(
+            "Battery too low to boot: {}mV (filtered), USB={}",
+            boot_battery.filtered_mv, boot_battery.usb_present
+        );
+        enter_low_battery_deep_sleep();
+    }
 
     let config = UartConfig::new()
         .baudrate(Hertz(9600))
@@ -237,11 +256,32 @@ fn main() -> anyhow::Result<()> {
         }
         let _ = led_command.send(LedStates::Running);
         let mut low_bat_flag = false;
+        let mut low_bat_consec: u32 = 0;
         let mut last_wifi_reconnect: Option<Instant> = None;
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
 
-            let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
+            let battery_state = batt.read(&adc, &mut vbat_pin);
+            let battery = battery_state.signed_percent;
+
+            if battery_state.is_critical() {
+                low_bat_consec = low_bat_consec.saturating_add(1);
+            } else {
+                low_bat_consec = 0;
+            }
+            // ~10 consecutive critical reads (≥ ~1s sustained) — shut down to avoid
+            // the brownout/restart loop near empty battery.
+            if low_bat_consec >= 10 {
+                info!(
+                    "Battery critical ({}mV filtered), stopping session and sleeping",
+                    battery_state.filtered_mv
+                );
+                let _ = stop_tx.send(());
+                let _ = storage.flush();
+                let _ = led_command.send(LedStates::LowBattery);
+                thread::sleep(Duration::from_millis(500));
+                enter_low_battery_deep_sleep();
+            }
 
             if (-20..=20).contains(&battery) && !low_bat_flag {
                 let _ = led_command.send(LedStates::LowBattery);

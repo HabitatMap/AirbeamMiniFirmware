@@ -1,6 +1,10 @@
 use esp_idf_svc::hal::adc::oneshot::{AdcChannelDriver, AdcDriver};
 use esp_idf_svc::hal::adc::{AdcChannel, ADCU1};
 use esp_idf_svc::hal::gpio::{Input, PinDriver, Pull};
+use esp_idf_svc::sys::{
+    esp_deep_sleep_enable_gpio_wakeup, esp_deep_sleep_start,
+    esp_deepsleep_gpio_wake_up_mode_t_ESP_GPIO_WAKEUP_GPIO_HIGH, esp_sleep_enable_timer_wakeup,
+};
 use log::info;
 use std::borrow::Borrow;
 use std::time::Instant;
@@ -12,12 +16,51 @@ const VBAT_EMPTY_MV: u32 = 3050;
 const VBAT_FULL_MV: u32 = 4000;
 const SAMPLE_WINDOW_MS: u128 = 20;
 
+/// Below this filtered voltage at boot (with no USB), refuse to start and sleep.
+pub const VBAT_BOOT_MIN_MV: u32 = 3100;
+/// Below this filtered voltage at runtime (with no USB), shut down the session and sleep.
+pub const VBAT_CRITICAL_MV: u32 = 3000;
+/// USB sense pin number — must match the GPIO passed to `BatteryMonitor::new`.
+const USB_SENSE_GPIO_NUM: u32 = 4;
+/// Periodic wakeup from low-battery deep sleep, in microseconds (5 minutes).
+const LOW_BAT_WAKEUP_PERIOD_US: u64 = 5 * 60 * 1_000_000;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BatteryState {
     /// -100..=-1 discharging, 1..=100 charging, 0 = read error
     pub signed_percent: i8,
-    /// actual battery voltage in mV (after divider correction)
+    /// instantaneous battery voltage in mV (after divider correction)
     pub voltage_mv: u32,
+    /// median-filtered battery voltage in mV; 0 means read error / not enough samples
+    pub filtered_mv: u32,
+    /// true when USB power is detected
+    pub usb_present: bool,
+}
+
+impl BatteryState {
+    /// Battery is critically low and device is on battery power.
+    pub fn is_critical(&self) -> bool {
+        !self.usb_present && self.filtered_mv != 0 && self.filtered_mv < VBAT_CRITICAL_MV
+    }
+
+    /// Battery is too low to start a new session.
+    pub fn is_below_boot_threshold(&self) -> bool {
+        !self.usb_present && self.filtered_mv != 0 && self.filtered_mv < VBAT_BOOT_MIN_MV
+    }
+}
+
+/// Power the chip down. Wakes on USB plug-in (GPIO4 high) or after a 5-minute timer.
+/// Does not return.
+pub fn enter_low_battery_deep_sleep() -> ! {
+    info!("Entering deep sleep due to low battery");
+    unsafe {
+        let _ = esp_sleep_enable_timer_wakeup(LOW_BAT_WAKEUP_PERIOD_US);
+        let _ = esp_deep_sleep_enable_gpio_wakeup(
+            1u64 << USB_SENSE_GPIO_NUM,
+            esp_deepsleep_gpio_wake_up_mode_t_ESP_GPIO_WAKEUP_GPIO_HIGH,
+        );
+        esp_deep_sleep_start();
+    }
 }
 
 pub struct BatteryMonitor<'a> {
@@ -62,16 +105,19 @@ impl<'a> BatteryMonitor<'a> {
             }
         }
 
+        let usb_present = self.usb_pin.is_high();
+
         if count == 0 {
             return BatteryState {
                 signed_percent: 0,
                 voltage_mv: 0,
+                filtered_mv: 0,
+                usb_present,
             };
         }
 
         let avg_adc_mv = sum / count as u32;
         let voltage_mv = avg_adc_mv * DIVIDER_RATIO_NUM / DIVIDER_RATIO_DEN;
-        let usb = self.usb_pin.is_high();
 
         self.history[self.history_idx] = voltage_mv;
         self.history_idx = (self.history_idx + 1) % self.history.len();
@@ -85,7 +131,7 @@ impl<'a> BatteryMonitor<'a> {
         let filtered_mv = buf[buf.len() / 2];
 
         let signed = match Self::map_percent(filtered_mv) {
-            Some(p) if usb => p as i8,
+            Some(p) if usb_present => p as i8,
             Some(p) => -(p as i8),
             None => 0i8,
         };
@@ -95,6 +141,8 @@ impl<'a> BatteryMonitor<'a> {
         BatteryState {
             signed_percent: signed,
             voltage_mv,
+            filtered_mv,
+            usb_present,
         }
     }
 
