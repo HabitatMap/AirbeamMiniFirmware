@@ -51,7 +51,11 @@ pub struct BleManager {
 }
 
 impl BleManager {
-    pub fn new(device_name: &str, event_tx: Sender<LoopEvent>) -> anyhow::Result<Self> {
+    pub fn new(
+        device_name: &str,
+        event_tx: Sender<LoopEvent>,
+        led_command: Sender<LedStates>,
+    ) -> anyhow::Result<Self> {
         let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
         let (notify_status_measurement_tx, notify_status_measurement_rx) =
             std::sync::mpsc::channel();
@@ -69,8 +73,10 @@ impl BleManager {
             let _ = server.update_conn_params(desc.conn_handle(), 6, 24, 0, 200);
         });
 
+        let led_disconnect = led_command.clone();
         server.on_disconnect(move |_, _| {
             info!("BLE client disconnected");
+            let _ = led_disconnect.send(LedStates::Idle);
         });
 
         // ── 3. Create service + characteristics ──────────────────────────

@@ -113,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     let mut storage = StorageManager::new();
     let mut nvs_manager = NvsManager::new(nvs.clone())?;
     let name = format!("AirBeamMini:{}", mac_str);
-    let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone())?;
+    let mut ble = ble::BleManager::new(name.as_str(), event_tx.clone(), led_command.clone())?;
     let esp_wifi = EspWifi::new(peripherals.modem.split().0, sys_loop.clone(), Some(nvs))?;
     let blocking = BlockingWifi::wrap(esp_wifi, sys_loop)?;
     let wifi_manager = WifiManager::new(blocking);
