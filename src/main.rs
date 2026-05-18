@@ -410,8 +410,7 @@ fn main() -> anyhow::Result<()> {
             } = &config.session_type
             {
                 if !connected()
-                    && last_wifi_reconnect
-                        .map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
+                    && last_wifi_reconnect.map_or(true, |t| t.elapsed() >= Duration::from_secs(30))
                 {
                     last_wifi_reconnect = Some(Instant::now());
                     let _ = wifi_manager.connect(wifi_ssid, wifi_password);

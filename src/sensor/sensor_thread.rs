@@ -205,20 +205,18 @@ impl SensorDriver {
                     // Fast path: averaging_time <= 1 s. PMS active-mode
                     // frame rate is already ~1 Hz, so averaging would only
                     // double the wall-clock period. Read a single frame.
-                    let (measurement, is_stopped) = if averaging_time
-                        <= Duration::from_secs(1)
-                        && !should_sleep
-                    {
-                        if stop_rx.try_recv().is_ok() {
-                            (None, true)
+                    let (measurement, is_stopped) =
+                        if averaging_time <= Duration::from_secs(1) && !should_sleep {
+                            if stop_rx.try_recv().is_ok() {
+                                (None, true)
+                            } else {
+                                let m = Self::read_uart(read_byte, Duration::from_secs(5));
+                                (m, false)
+                            }
                         } else {
-                            let m = Self::read_uart(read_byte, Duration::from_secs(5));
-                            (m, false)
-                        }
-                    } else {
-                        //for averaging_time <= 3 seconds, we read in active mode
-                        Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx)
-                    };
+                            //for averaging_time <= 3 seconds, we read in active mode
+                            Self::averaging_loop(averaging_time, read_byte, read_command, &stop_rx)
+                        };
 
                     if is_stopped {
                         break;

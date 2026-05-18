@@ -240,7 +240,11 @@ impl BleManager {
                 battery_level: battery_level(),
                 session: config.session_uuid,
                 has_measurements,
-                file_size: if has_measurements { file_size.unwrap_or(0) } else { 0 },
+                file_size: if has_measurements {
+                    file_size.unwrap_or(0)
+                } else {
+                    0
+                },
             }
         } else {
             DeviceStatus::Idle(battery_level())
