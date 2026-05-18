@@ -262,7 +262,13 @@ fn main() -> anyhow::Result<()> {
                                 break;
                             }
                             let _ = storage.save_measurement(m);
-                            if let SessionType::FIXED { .. } = config.session_type {
+                            let flush_immediately = match config.session_type {
+                                SessionType::FIXED { .. } => true,
+                                SessionType::MOBILE => {
+                                    config.interval >= Duration::from_secs(60)
+                                }
+                            };
+                            if flush_immediately {
                                 let _ = storage.flush();
                             }
                         } else {
