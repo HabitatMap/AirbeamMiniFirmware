@@ -235,8 +235,10 @@ fn main() -> anyhow::Result<()> {
         if let SessionType::MOBILE = config.session_type {
             wifi_manager.disconnect();
         }
-        let _ = led_command.send(LedStates::Running);
         let mut low_bat_flag = false;
+        let mut was_connected = connected();
+        let mut reconnect_until: Option<Instant> = None;
+        let mut current_led: Option<LedStates> = None;
         let mut last_wifi_reconnect: Option<Instant> = None;
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
@@ -244,11 +246,34 @@ fn main() -> anyhow::Result<()> {
             let battery = batt.read(&adc, &mut vbat_pin).signed_percent;
 
             if (-20..=20).contains(&battery) && !low_bat_flag {
-                let _ = led_command.send(LedStates::LowBattery);
                 low_bat_flag = true;
             } else if !(-25..=25).contains(&battery) && low_bat_flag {
-                let _ = led_command.send(LedStates::Running);
                 low_bat_flag = false;
+            }
+
+            let now_connected = connected();
+            if now_connected && !was_connected {
+                reconnect_until = Some(Instant::now() + Duration::from_secs(120));
+            }
+            was_connected = now_connected;
+            if let Some(t) = reconnect_until {
+                if Instant::now() >= t {
+                    reconnect_until = None;
+                }
+            }
+
+            let desired = if low_bat_flag {
+                LedStates::LowBattery
+            } else if reconnect_until.is_some() {
+                LedStates::Reconnected
+            } else if now_connected {
+                LedStates::Running
+            } else {
+                LedStates::RunningDisconnected
+            };
+            if current_led != Some(desired) {
+                let _ = led_command.send(desired);
+                current_led = Some(desired);
             }
 
             if let Ok(event) = event {
