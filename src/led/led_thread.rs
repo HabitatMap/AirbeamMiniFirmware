@@ -8,9 +8,12 @@ use std::time::Duration;
 use esp_idf_svc::hal::gpio::OutputPin;
 use esp_idf_svc::hal::ledc::{LedcChannel, LedcTimer, LowSpeed};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LedStates {
     Idle,
     Running,
+    RunningDisconnected,
+    Reconnected,
     BleConnected,
     LowBattery,
     Syncing,
@@ -64,10 +67,14 @@ pub struct LedPins<T, C0, C1, C2, R, G, B> {
 fn get_command(status: LedStates) -> LedCommand {
     match status {
         LedStates::Idle => LedCommand::Continuous(Color::GREEN),
-        LedStates::Running => LedCommand::Blinking(Color::BLUE, Duration::from_secs(10)),
-        LedStates::BleConnected => LedCommand::Continuous(Color::BLUE),
-        LedStates::LowBattery => LedCommand::Blinking(Color::RED, Duration::from_secs(1)),
-        LedStates::Syncing => LedCommand::Blinking(Color::WHITE, Duration::from_secs(1)),
+        LedStates::Running => LedCommand::Blinking(Color::WHITE, Duration::from_secs(9)),
+        LedStates::RunningDisconnected => {
+            LedCommand::Blinking(Color::YELLOW, Duration::from_secs(9))
+        }
+        LedStates::Reconnected => LedCommand::Continuous(Color::WHITE),
+        LedStates::BleConnected => LedCommand::Continuous(Color::GREEN),
+        LedStates::LowBattery => LedCommand::Blinking(Color::MAGENTA, Duration::from_secs(9)),
+        LedStates::Syncing => LedCommand::Continuous(Color::BLUE),
     }
 }
 
