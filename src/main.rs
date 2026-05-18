@@ -237,7 +237,15 @@ fn main() -> anyhow::Result<()> {
         }
         let mut low_bat_flag = false;
         let mut was_connected = connected();
-        let mut reconnect_until: Option<Instant> = None;
+        let is_mobile_initial = matches!(config.session_type, SessionType::MOBILE);
+        // Old FW initializes stream_light=1, producing a solid white 120s window
+        // at every session start (gated on BLE-connected for mode 0).
+        let mut reconnect_until: Option<Instant> =
+            if !is_mobile_initial || was_connected {
+                Some(Instant::now() + Duration::from_secs(120))
+            } else {
+                None
+            };
         let mut current_led: Option<LedStates> = None;
         let mut last_wifi_reconnect: Option<Instant> = None;
         loop {
@@ -265,10 +273,10 @@ fn main() -> anyhow::Result<()> {
 
             let desired = if low_bat_flag {
                 LedStates::LowBattery
-            } else if !is_mobile {
-                LedStates::Off
             } else if reconnect_until.is_some() {
                 LedStates::Reconnected
+            } else if !is_mobile {
+                LedStates::Off
             } else if now_connected {
                 LedStates::Running
             } else {
