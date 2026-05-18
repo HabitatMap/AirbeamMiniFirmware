@@ -68,9 +68,11 @@ impl BleManager {
         let server = ble_device.get_server();
 
         // connection / disconnection callback
+        let led_connect = led_command.clone();
         server.on_connect(move |server, desc| {
             info!("BLE client connected, conn_handle={}", desc.conn_handle());
             let _ = server.update_conn_params(desc.conn_handle(), 6, 24, 0, 200);
+            let _ = led_connect.send(LedStates::BleConnected);
         });
 
         let led_disconnect = led_command.clone();
