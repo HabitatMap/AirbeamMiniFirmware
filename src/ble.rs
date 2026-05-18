@@ -16,6 +16,7 @@ use esp32_nimble::{
 };
 use esp_idf_svc::sys::{settimeofday, timeval};
 use log::{error, info, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -46,6 +47,8 @@ pub struct BleManager {
     notify_status_measurement: std::sync::mpsc::Receiver<NotifyTxStatus>,
     notify_status_sync: std::sync::mpsc::Receiver<NotifyTxStatus>,
     cmd_rx: std::sync::mpsc::Receiver<AppCommand>,
+    // true while run_setup is active; gates connect/disconnect LED side-effects
+    setup_active: Arc<AtomicBool>,
     // keep server alive
     _ble_device: &'static BLEDevice,
 }
@@ -67,18 +70,26 @@ impl BleManager {
         // ── 2. Set up GATT server ────────────────────────────────────────
         let server = ble_device.get_server();
 
+        let setup_active = Arc::new(AtomicBool::new(false));
+
         // connection / disconnection callback
         let led_connect = led_command.clone();
+        let setup_active_c = setup_active.clone();
         server.on_connect(move |server, desc| {
             info!("BLE client connected, conn_handle={}", desc.conn_handle());
             let _ = server.update_conn_params(desc.conn_handle(), 6, 24, 0, 200);
-            let _ = led_connect.send(LedStates::BleConnected);
+            if setup_active_c.load(Ordering::Relaxed) {
+                let _ = led_connect.send(LedStates::BleConnected);
+            }
         });
 
         let led_disconnect = led_command.clone();
+        let setup_active_d = setup_active.clone();
         server.on_disconnect(move |_, _| {
             info!("BLE client disconnected");
-            let _ = led_disconnect.send(LedStates::Idle);
+            if setup_active_d.load(Ordering::Relaxed) {
+                let _ = led_disconnect.send(LedStates::Idle);
+            }
         });
 
         // ── 3. Create service + characteristics ──────────────────────────
@@ -167,6 +178,7 @@ impl BleManager {
             notify_status_measurement: notify_status_measurement_rx,
             notify_status_sync: notify_status_sync_rx,
             cmd_rx,
+            setup_active,
             _ble_device: ble_device,
         })
     }
@@ -195,6 +207,15 @@ impl BleManager {
         F5: Fn(usize) -> anyhow::Result<()>,
         W: Fn(&str, &str) -> anyhow::Result<()>,
     {
+        struct SetupGuard<'a>(&'a AtomicBool);
+        impl<'a> Drop for SetupGuard<'a> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
+        self.setup_active.store(true, Ordering::Relaxed);
+        let _setup_guard = SetupGuard(&self.setup_active);
+
         //reconnect wifi on fixed session after timeout
         if !self.wait_for_connection(Self::get_timeout(saved_config.clone()))? {
             if let Some(config) = saved_config.clone() {
