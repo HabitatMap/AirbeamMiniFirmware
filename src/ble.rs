@@ -297,6 +297,7 @@ impl BleManager {
                         file_size: file_size.unwrap_or(1),
                         password: "".to_string(),
                     })?;
+                    let _ = led_command.send(LedStates::BleSync);
                     std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                     let measurements_iter = get_measurements_iter().unwrap();
                     let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
@@ -324,6 +325,7 @@ impl BleManager {
                             };
                         }
                     }
+                    let _ = led_command.send(LedStates::BleConnected);
                     self.send_response(DeviceResponse::Ready)?;
                 }
 

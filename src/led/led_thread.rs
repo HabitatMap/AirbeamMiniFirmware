@@ -10,6 +10,7 @@ use esp_idf_svc::hal::ledc::{LedcChannel, LedcTimer, LowSpeed};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LedStates {
+    Off,
     Idle,
     Running,
     RunningDisconnected,
@@ -17,6 +18,7 @@ pub enum LedStates {
     BleConnected,
     LowBattery,
     Syncing,
+    BleSync,
 }
 
 #[derive(Clone, Copy)]
@@ -66,6 +68,7 @@ pub struct LedPins<T, C0, C1, C2, R, G, B> {
 
 fn get_command(status: LedStates) -> LedCommand {
     match status {
+        LedStates::Off => LedCommand::Off,
         LedStates::Idle => LedCommand::Continuous(Color::GREEN),
         LedStates::Running => LedCommand::Blinking(Color::WHITE, Duration::from_secs(9)),
         LedStates::RunningDisconnected => {
@@ -75,6 +78,7 @@ fn get_command(status: LedStates) -> LedCommand {
         LedStates::BleConnected => LedCommand::Continuous(Color::BLUE),
         LedStates::LowBattery => LedCommand::Blinking(Color::MAGENTA, Duration::from_secs(9)),
         LedStates::Syncing => LedCommand::Continuous(Color::BLUE),
+        LedStates::BleSync => LedCommand::Continuous(Color::CYAN),
     }
 }
 
