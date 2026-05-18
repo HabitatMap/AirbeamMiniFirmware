@@ -72,7 +72,7 @@ fn get_command(status: LedStates) -> LedCommand {
             LedCommand::Blinking(Color::YELLOW, Duration::from_secs(9))
         }
         LedStates::Reconnected => LedCommand::Continuous(Color::WHITE),
-        LedStates::BleConnected => LedCommand::Continuous(Color::GREEN),
+        LedStates::BleConnected => LedCommand::Continuous(Color::BLUE),
         LedStates::LowBattery => LedCommand::Blinking(Color::MAGENTA, Duration::from_secs(9)),
         LedStates::Syncing => LedCommand::Continuous(Color::BLUE),
     }
