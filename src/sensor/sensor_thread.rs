@@ -1,5 +1,5 @@
 use crate::sensor::measurement::Measurement;
-use crate::sensor::sensor_parser::parse_sensor;
+use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use crate::LoopEvent;
 use esp_idf_svc::hal::uart::UartDriver;
 use log::{info, warn};
@@ -278,20 +278,19 @@ impl SensorDriver {
                         _ => None,
                     }
                 };
-                let initial = Self::read_uart(read_byte, Duration::from_secs(5));
+                let initial = Self::read_raw_frame(read_byte, Duration::from_secs(5));
                 let mut current_minute: u64 = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs() / 60)
                     .unwrap_or(0);
                 let initial_minute = current_minute;
-                if let Some(mut m) = initial {
+                if let Some(pms) = initial {
                     info!("Read successful. Sending initial measurement.");
-                    m.timestamp = (current_minute * 60) as u32;
+                    let m = Measurement::from_pms_measurement(pms, (current_minute * 60) as u32);
                     let _ = event_tx.send(m.into());
                 }
 
-                let mut sum_pm1: u32 = 0;
-                let mut sum_pm25: u32 = 0;
+                let mut sum_pm1_atm: u32 = 0;
                 let mut count: u32 = 0;
 
                 let read_byte_loop = || {
@@ -306,7 +305,9 @@ impl SensorDriver {
                     if stop_rx.try_recv().is_ok() {
                         break;
                     }
-                    if let Some(frame) = Self::read_uart(read_byte_loop, Duration::from_secs(5)) {
+                    if let Some(frame) =
+                        Self::read_raw_frame(read_byte_loop, Duration::from_secs(5))
+                    {
                         let now_min = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map(|d| d.as_secs() / 60)
@@ -317,24 +318,22 @@ impl SensorDriver {
                         }
                         if now_min != current_minute {
                             if count > 0 {
-                                let m = Measurement {
-                                    pm1_0_avg: (sum_pm1 / count) as u16,
-                                    pm2_5_avg: (sum_pm25 / count) as u16,
-                                    timestamp: (current_minute * 60) as u32,
-                                };
+                                let avg_raw = sum_pm1_atm as f32 / count as f32;
+                                let m = Measurement::from_raw_pm1_atm(
+                                    avg_raw,
+                                    (current_minute * 60) as u32,
+                                );
                                 event_tx.send(m.into()).unwrap_or_else(|e| {
                                     log::error!("Error sending measurement: {:?}", e);
                                 });
                             } else if current_minute != initial_minute {
                                 warn!("No samples in minute {}, skipping emit.", current_minute);
                             }
-                            sum_pm1 = 0;
-                            sum_pm25 = 0;
+                            sum_pm1_atm = 0;
                             count = 0;
                             current_minute = now_min;
                         }
-                        sum_pm1 += frame.pm1_0_avg as u32;
-                        sum_pm25 += frame.pm2_5_avg as u32;
+                        sum_pm1_atm += frame.pm1_0_atm as u32;
                         count += 1;
                     }
                 }
@@ -357,17 +356,15 @@ impl SensorDriver {
         F: FnMut() -> Option<[u8; 1]>,
         G: Fn() -> Option<usize>,
     {
-        let mut pm1_0_sum = 0_u32;
-        let mut pm2_5_sum = 0_u32;
+        let mut pm1_0_atm_sum = 0_u32;
         let mut count = 0_u32;
         let instant = Instant::now();
         let mut stopped = false;
 
         while duration > instant.elapsed() {
             let is_passive = read_command().is_some();
-            if let Some(parsed) = Self::read_uart(&mut read_byte, Duration::from_secs(5)) {
-                pm1_0_sum += parsed.pm1_0_avg as u32;
-                pm2_5_sum += parsed.pm2_5_avg as u32;
+            if let Some(parsed) = Self::read_raw_frame(&mut read_byte, Duration::from_secs(5)) {
+                pm1_0_atm_sum += parsed.pm1_0_atm as u32;
                 count += 1;
             }
             if stop.try_recv().is_ok() {
@@ -381,22 +378,24 @@ impl SensorDriver {
         }
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).ok();
         if count > 0 && timestamp.is_some() {
-            let final_pm1 = pm1_0_sum / count;
-            let final_pm25 = pm2_5_sum / count;
-            (
-                Some(Measurement {
-                    pm1_0_avg: final_pm1 as u16,
-                    pm2_5_avg: final_pm25 as u16,
-                    timestamp: timestamp.unwrap().as_secs() as u32,
-                }),
-                stopped,
-            )
+            let avg_raw = pm1_0_atm_sum as f32 / count as f32;
+            let m = Measurement::from_raw_pm1_atm(avg_raw, timestamp.unwrap().as_secs() as u32);
+            (Some(m), stopped)
         } else {
             (None, stopped)
         }
     }
 
-    fn read_uart<F>(mut read_byte: F, timeout: Duration) -> Option<Measurement>
+    fn read_uart<F>(read_byte: F, timeout: Duration) -> Option<Measurement>
+    where
+        F: FnMut() -> Option<[u8; 1]>,
+    {
+        let pms = Self::read_raw_frame(read_byte, timeout)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+        Some(Measurement::from_pms_measurement(pms, now.as_secs() as u32))
+    }
+
+    fn read_raw_frame<F>(mut read_byte: F, timeout: Duration) -> Option<PmsMeasurement>
     where
         F: FnMut() -> Option<[u8; 1]>,
     {
@@ -440,12 +439,7 @@ impl SensorDriver {
                 }
             }
         }
-        parse_sensor(&buf).map(|pms| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|now| Measurement::from_pms_measurement(pms, now.as_secs() as u32))
-        })?
+        parse_sensor(&buf)
     }
 
     ///returns sleep duration and measurement collection time
