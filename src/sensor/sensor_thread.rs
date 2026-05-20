@@ -1,5 +1,5 @@
 use crate::sensor::measurement::Measurement;
-use crate::sensor::sensor_parser::parse_sensor;
+use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use crate::LoopEvent;
 use esp_idf_svc::hal::uart::UartDriver;
 use log::{info, warn};
@@ -18,6 +18,12 @@ const CMD_SLEEP: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x00, 0x01, 0x73];
 const CMD_WAKE: [u8; 7] = [0x42, 0x4D, 0xE4, 0x00, 0x01, 0x01, 0x74];
 const WAKE_UP_SECONDS: u64 = 15;
 const PASSIVE_THRESHOLD: u64 = 3;
+/// Number of raw frames averaged for the initial emit of a fixed-minute
+/// session. A single post-warmup frame is statistically noisier (and biased
+/// low on the PMS) than the ~60-frame per-minute averages that follow, so
+/// average a few frames so the first reading matches the character of
+/// subsequent emits.
+const FIXED_INITIAL_FRAME_COUNT: u32 = 5;
 
 const SENSOR_READOUT_TIMEOUT: u32 = 2300; //Longest possible time between the readouts
 
@@ -276,15 +282,19 @@ impl SensorDriver {
                         _ => None,
                     }
                 };
-                let initial = Self::read_uart(read_byte, Duration::from_secs(5));
+                let initial_avg = Self::read_initial_avg_pms(
+                    read_byte,
+                    FIXED_INITIAL_FRAME_COUNT,
+                    Duration::from_secs(5),
+                );
                 let mut current_minute: u64 = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_secs() / 60)
                     .unwrap_or(0);
                 let initial_minute = current_minute;
-                if let Some(mut m) = initial {
+                if let Some(avg_pms) = initial_avg {
                     info!("Read successful. Sending initial measurement.");
-                    m.timestamp = (current_minute * 60) as u32;
+                    let m = Measurement::from_pms_measurement(avg_pms, (current_minute * 60) as u32);
                     let _ = event_tx.send(m.into());
                 }
 
@@ -394,7 +404,16 @@ impl SensorDriver {
         }
     }
 
-    fn read_uart<F>(mut read_byte: F, timeout: Duration) -> Option<Measurement>
+    fn read_uart<F>(read_byte: F, timeout: Duration) -> Option<Measurement>
+    where
+        F: FnMut() -> Option<[u8; 1]>,
+    {
+        let pms = Self::read_raw_frame(read_byte, timeout)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
+        Some(Measurement::from_pms_measurement(pms, now.as_secs() as u32))
+    }
+
+    fn read_raw_frame<F>(mut read_byte: F, timeout: Duration) -> Option<PmsMeasurement>
     where
         F: FnMut() -> Option<[u8; 1]>,
     {
@@ -438,12 +457,41 @@ impl SensorDriver {
                 }
             }
         }
-        parse_sensor(&buf).map(|pms| {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|now| Measurement::from_pms_measurement(pms, now.as_secs() as u32))
-        })?
+        parse_sensor(&buf)
+    }
+
+    /// Reads up to `n` raw frames and returns the per-field averages as a
+    /// PmsMeasurement. Used for the first emit of a fixed-minute session so the
+    /// initial reading is built from the same statistical base as the
+    /// per-minute averaged emits that follow it. Averages the calibration
+    /// inputs (`c03`, `c10`) so the nonlinear pm1/pm2.5 equation is applied
+    /// once on smoothed counts.
+    fn read_initial_avg_pms<F>(
+        mut read_byte: F,
+        n: u32,
+        per_frame_timeout: Duration,
+    ) -> Option<PmsMeasurement>
+    where
+        F: FnMut() -> Option<[u8; 1]>,
+    {
+        let mut sum_c03: u32 = 0;
+        let mut sum_c10: u32 = 0;
+        let mut count: u32 = 0;
+        for _ in 0..n {
+            if let Some(frame) = Self::read_raw_frame(&mut read_byte, per_frame_timeout) {
+                sum_c03 += frame.c03 as u32;
+                sum_c10 += frame.c10 as u32;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            None
+        } else {
+            Some(PmsMeasurement {
+                c03: (sum_c03 / count) as u16,
+                c10: (sum_c10 / count) as u16,
+            })
+        }
     }
 
     ///returns sleep duration and measurement collection time
