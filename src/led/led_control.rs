@@ -34,13 +34,14 @@ impl<'a> RgbLed<'a> {
     }
 
     pub fn set_color(&mut self, r: u8, g: u8, b: u8, brightness: Option<u8>) -> anyhow::Result<()> {
-        self.red.set_duty(Self::change_brightnes(r, brightness))?;
-        self.green.set_duty(Self::change_brightnes(g, brightness))?;
-        self.blue.set_duty(Self::change_brightnes(b, brightness))?;
+        self.red.set_duty(Self::change_brightness(r, brightness))?;
+        self.green
+            .set_duty(Self::change_brightness(g, brightness))?;
+        self.blue.set_duty(Self::change_brightness(b, brightness))?;
         Ok(())
     }
 
-    fn change_brightnes(value: u8, percent: Option<u8>) -> u32 {
+    fn change_brightness(value: u8, percent: Option<u8>) -> u32 {
         if let Some(percent) = percent {
             let percent = percent.clamp(0, 100);
             let intensity = 255u16 - value as u16;
@@ -52,6 +53,9 @@ impl<'a> RgbLed<'a> {
     }
 
     pub fn off(&mut self) -> anyhow::Result<()> {
-        self.set_color(255, 255, 255, None)
+        self.red.set_duty(256)?;
+        self.green.set_duty(256)?;
+        self.blue.set_duty(256)?;
+        Ok(())
     }
 }

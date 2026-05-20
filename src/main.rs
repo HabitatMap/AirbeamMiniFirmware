@@ -231,12 +231,11 @@ fn main() -> anyhow::Result<()> {
         let is_mobile_initial = matches!(config.session_type, SessionType::MOBILE);
         // Old FW initializes stream_light=1, producing a solid white 120s window
         // at every session start (gated on BLE-connected for mode 0).
-        let mut reconnect_until: Option<Instant> =
-            if !is_mobile_initial || was_connected {
-                Some(Instant::now() + Duration::from_secs(120))
-            } else {
-                None
-            };
+        let mut reconnect_until: Option<Instant> = if !is_mobile_initial || was_connected {
+            Some(Instant::now() + Duration::from_secs(120))
+        } else {
+            None
+        };
         let mut current_led: Option<LedStates> = None;
         let mut last_wifi_reconnect: Option<Instant> = None;
         let mut battery = 100_i8;
@@ -291,9 +290,7 @@ fn main() -> anyhow::Result<()> {
                             let _ = storage.save_measurement(m);
                             let flush_immediately = match config.session_type {
                                 SessionType::FIXED { .. } => true,
-                                SessionType::MOBILE => {
-                                    config.interval >= Duration::from_secs(60)
-                                }
+                                SessionType::MOBILE => config.interval >= Duration::from_secs(60),
                             };
                             if flush_immediately {
                                 let _ = storage.flush();
