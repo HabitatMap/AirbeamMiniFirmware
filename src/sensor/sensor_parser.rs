@@ -15,7 +15,7 @@ pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     }
 
     let c03 = BigEndian::read_u16(&buffer[16..18]);
-    let c10 = BigEndian::read_u16(&buffer[20..22]);
+    let c10 = BigEndian::read_u16(&buffer[26..28]);
 
     Some(PmsMeasurement { c03, c10 })
 }
