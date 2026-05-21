@@ -1,6 +1,7 @@
 use crate::sensor::measurement::Measurement;
 use crate::sensor::sensor_parser::{parse_sensor, PmsMeasurement};
 use crate::LoopEvent;
+use esp_idf_svc::hal::delay::TickType;
 use esp_idf_svc::hal::uart::UartDriver;
 use log::{info, warn};
 use std::sync::mpsc::{Receiver, Sender};
@@ -25,7 +26,11 @@ const PASSIVE_THRESHOLD: u64 = 3;
 /// subsequent emits.
 const FIXED_INITIAL_FRAME_COUNT: u32 = 5;
 
-const SENSOR_READOUT_TIMEOUT: u32 = 2300; //Longest possible time between the readouts
+/// Per-byte UART read timeout. `UartDriver::read` takes a FreeRTOS tick count,
+/// so convert milliseconds to ticks; otherwise a missed passive-mode response
+/// blocks the sensor thread for `2300 * portTICK_PERIOD_MS` (~23 s @ 100 Hz),
+/// producing a multi-tens-of-seconds gap in 5 s+ sessions.
+const SENSOR_READOUT_TIMEOUT: u32 = TickType::new_millis(2300).ticks();
 
 #[derive(Clone, Copy, Debug)]
 enum WarmupState {
