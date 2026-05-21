@@ -3,7 +3,7 @@ use byteorder::{BigEndian, ByteOrder};
 #[derive(Debug, Default, Clone)]
 pub struct PmsMeasurement {
     pub(crate) c03: u16,
-    pub(crate) c10: u16,
+    pub(crate) c1: u16,
 }
 pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     // Checksum is the last 2 bytes. It should be equal to the sum of the first 30 bytes.
@@ -15,7 +15,6 @@ pub fn parse_sensor(buffer: &[u8; 32]) -> Option<PmsMeasurement> {
     }
 
     let c03 = BigEndian::read_u16(&buffer[16..18]);
-    let c10 = BigEndian::read_u16(&buffer[26..28]);
-
-    Some(PmsMeasurement { c03, c10 })
+    let c1 = BigEndian::read_u16(&buffer[20..22]);
+    Some(PmsMeasurement { c03, c1 })
 }

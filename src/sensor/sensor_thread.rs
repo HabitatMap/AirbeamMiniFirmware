@@ -480,7 +480,7 @@ impl SensorDriver {
         for _ in 0..n {
             if let Some(frame) = Self::read_raw_frame(&mut read_byte, per_frame_timeout) {
                 sum_c03 += frame.c03 as u32;
-                sum_c10 += frame.c10 as u32;
+                sum_c10 += frame.c1 as u32;
                 count += 1;
             }
         }
@@ -489,7 +489,7 @@ impl SensorDriver {
         } else {
             Some(PmsMeasurement {
                 c03: (sum_c03 / count) as u16,
-                c10: (sum_c10 / count) as u16,
+                c1: (sum_c10 / count) as u16,
             })
         }
     }
