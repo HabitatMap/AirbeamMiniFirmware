@@ -201,9 +201,6 @@ impl SensorDriver {
                         thread::sleep(Duration::from_secs(WAKE_UP_SECONDS));
                         let _ = uart.write(&CMD_PASSIVE);
                     }
-                    if averaging_time > Duration::from_secs(PASSIVE_THRESHOLD) {
-                        let _ = uart.write(&CMD_PASSIVE);
-                    }
                     // In active mode the PMS streams ~1 Hz; clearing the RX
                     // buffer here would discard the next pending frame and
                     // force a fresh ~1 s wait every iteration. Only flush
