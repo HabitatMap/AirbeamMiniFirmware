@@ -239,6 +239,7 @@ fn main() -> anyhow::Result<()> {
         let mut current_led: Option<LedStates> = None;
         let mut last_wifi_reconnect: Option<Instant> = None;
         let mut battery = 100_i8;
+        let mut storage_error = false;
         let _ = slow_cpu_freq();
         loop {
             let event = event_rx.recv_timeout(Duration::from_millis(100));
@@ -261,7 +262,9 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            let desired = if low_bat_flag {
+            let desired = if storage_error {
+                LedStates::StorageError
+            } else if low_bat_flag {
                 LedStates::LowBattery
             } else if reconnect_until.is_some() {
                 LedStates::Reconnected
@@ -287,7 +290,7 @@ fn main() -> anyhow::Result<()> {
                                 f();
                                 break;
                             }
-                            let _ = storage.save_measurement(m);
+                            storage_error = storage.save_measurement(m).is_err();
                             let flush_immediately = match config.session_type {
                                 SessionType::FIXED { .. } => true,
                                 SessionType::MOBILE => config.interval >= Duration::from_secs(60),
@@ -296,6 +299,7 @@ fn main() -> anyhow::Result<()> {
                                 let _ = storage.flush();
                             }
                         } else {
+                            storage_error = false;
                             if ble.is_connected() {
                                 battery = batt.read(&adc, &mut vbat_pin).signed_percent;
                                 let _ = ble.send_response(DeviceResponse::Ready);
@@ -353,13 +357,13 @@ fn main() -> anyhow::Result<()> {
                             });
                             let _ = led_command.send(LedStates::BleSync);
                             current_led = Some(LedStates::BleSync);
-                            std::thread::sleep(Duration::from_millis(100)); //let app prepare for sync
+                            thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                             let measurements_iter = storage.iter_measurements().unwrap();
                             let mut measurements: Vec<Measurement> = Vec::with_capacity(30);
                             for line in measurements_iter {
                                 let new = line.measurements;
                                 if new.len() + measurements.len() > 30 {
-                                    if let Err(_) = ble.send_measurements(&measurements) {
+                                    if ble.send_measurements(&measurements).is_err() {
                                         ble.send_response(DeviceResponse::Nack(
                                             ErrorCode::SyncFailed,
                                         ))?;
@@ -408,7 +412,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             if storage.has_measurements() && connected() {
-                let _ = sync_from_storage(&config, &storage, |m| send_measurements(m));
+                let _ = sync_from_storage(config, &storage, |m| send_measurements(m));
             }
         }
     }
