@@ -19,6 +19,7 @@ pub enum LedStates {
     LowBattery,
     Syncing,
     BleSync,
+    StorageError
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +80,7 @@ fn get_command(status: LedStates) -> LedCommand {
         LedStates::LowBattery => LedCommand::Blinking(Color::MAGENTA, Duration::from_secs(9)),
         LedStates::Syncing => LedCommand::Continuous(Color::CYAN),
         LedStates::BleSync => LedCommand::Continuous(Color::CYAN),
+        LedStates::StorageError => LedCommand::Continuous(Color::RED),
     }
 }
 
