@@ -161,7 +161,7 @@ fn main() -> anyhow::Result<()> {
         };
         let domain = nvs_manager.get_domain()?;
 
-        let mut send_measurement = |m: Measurement, battery: i8| -> Result<(), SendingError> {
+        let send_measurement = |m: Measurement, battery: i8| -> Result<(), SendingError> {
             match &config.session_type {
                 SessionType::MOBILE => ble.send_measurement(&m, battery, config.session_uuid),
                 _ => wifi_manager.send_measurements(
@@ -362,7 +362,6 @@ fn main() -> anyhow::Result<()> {
                                 password: "".to_string(),
                             });
                             let _ = led_command.send(LedStates::BleSync);
-                            current_led = Some(LedStates::BleSync);
                             thread::sleep(Duration::from_millis(100)); //let app prepare for sync
                             let measurements_iter = storage.iter_measurements().unwrap();
                             let mut measurements: Vec<Measurement> = Vec::with_capacity(30);

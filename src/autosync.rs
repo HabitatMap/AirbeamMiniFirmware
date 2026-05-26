@@ -44,7 +44,7 @@ where
                 Err(SyncError::RemoveStorage)
             }
         }
-        Err(e) => Err(SyncError::Send),
+        Err(_) => Err(SyncError::Send),
     }
 }
 #[derive(Debug)]
