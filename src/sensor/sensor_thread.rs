@@ -296,7 +296,8 @@ impl SensorDriver {
                 let initial_minute = current_minute;
                 if let Some(avg_pms) = initial_avg {
                     info!("Read successful. Sending initial measurement.");
-                    let m = Measurement::from_pms_measurement(avg_pms, (current_minute * 60) as u32);
+                    let m =
+                        Measurement::from_pms_measurement(avg_pms, (current_minute * 60) as u32);
                     let _ = event_tx.send(m.into());
                 }
 
@@ -316,7 +317,9 @@ impl SensorDriver {
                     if stop_rx.try_recv().is_ok() {
                         break;
                     }
-                    if let Some(frame) = Self::read_raw_frame(read_byte_loop, Duration::from_secs(5)) {
+                    if let Some(frame) =
+                        Self::read_raw_frame(read_byte_loop, Duration::from_secs(5))
+                    {
                         let now_min = SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .map(|d| d.as_secs() / 60)
@@ -331,7 +334,10 @@ impl SensorDriver {
                                     c03: (sum_c03 / count) as u16,
                                     c1: (sum_c10 / count) as u16,
                                 };
-                                let m = Measurement::from_pms_measurement(avg_pms, (current_minute * 60) as u32);
+                                let m = Measurement::from_pms_measurement(
+                                    avg_pms,
+                                    (current_minute * 60) as u32,
+                                );
                                 event_tx.send(m.into()).unwrap_or_else(|e| {
                                     log::error!("Error sending measurement: {:?}", e);
                                 });

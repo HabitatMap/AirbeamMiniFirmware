@@ -19,7 +19,7 @@ pub enum LedStates {
     LowBattery,
     Syncing,
     BleSync,
-    StorageError
+    StorageError,
 }
 
 #[derive(Clone, Copy)]
