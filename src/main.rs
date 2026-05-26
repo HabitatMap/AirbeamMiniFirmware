@@ -195,14 +195,20 @@ fn main() -> anyhow::Result<()> {
             thread::sleep(Duration::from_millis(10));
         }
 
+        //If no time received from server, don't continue
         if let SessionType::FIXED { token, .. } = config.session_type {
-            if connected() {
-                let _ = wifi_manager.get_time(
-                    domain.as_str(),
-                    token,
-                    config.session_uuid,
-                    event_tx.clone(),
-                );
+            if connected()
+                && wifi_manager
+                    .get_time(
+                        domain.as_str(),
+                        token,
+                        config.session_uuid,
+                        event_tx.clone(),
+                    )
+                    .is_err()
+                && !ble.is_connected()
+            {
+                panic!("Failed to get time from server");
             }
         }
 
