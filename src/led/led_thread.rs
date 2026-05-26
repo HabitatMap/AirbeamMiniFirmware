@@ -1,6 +1,6 @@
 use crate::led::led_control::RgbLed;
 use esp_idf_svc::hal::ledc::config::TimerConfig;
-use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution, SpeedMode};
+use esp_idf_svc::hal::ledc::{LedcTimerDriver, Resolution};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;

@@ -4,7 +4,6 @@ use log::{error, info, warn};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::Mutex;
-use std::time::Duration;
 
 pub const MOUNT_POINT: &str = "/storage";
 pub const FILE_PATH: &str = "/storage/psm.bin";

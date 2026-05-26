@@ -46,10 +46,10 @@ impl NvsManager {
             .map(|s| s.to_string());
         Ok(domain.unwrap_or_else(|| DEFAULT_DOMAIN.to_string()))
     }
-
-    pub fn set_domain(&mut self, domain: &str) -> Result<(), EspError> {
-        self.nvs.set_str(KEY_DOMAIN, domain)
-    }
+    // for dev use?
+    // pub fn set_domain(&mut self, domain: &str) -> Result<(), EspError> {
+    //     self.nvs.set_str(KEY_DOMAIN, domain)
+    // }
 
     pub fn get_uuid(&self) -> Result<Option<Uuid>, EspError> {
         let mut buffer = [0u8; 16];
@@ -194,8 +194,8 @@ impl NvsManager {
                 self.set_pm1_index(*pm1_index)?;
                 self.set_pm2_5_index(*pm2_5_index)?;
                 self.set_token(*token)?;
-                self.set_wifi_ssid(&wifi_ssid)?;
-                self.set_wifi_password(&wifi_password)?;
+                self.set_wifi_ssid(wifi_ssid)?;
+                self.set_wifi_password(wifi_password)?;
             }
         }
         Ok(())
