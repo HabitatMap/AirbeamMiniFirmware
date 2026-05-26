@@ -41,8 +41,9 @@ impl StorageManager {
     /// Buffer a measurement. When the buffer is full, it automatically flushes to flash.
     pub fn save_measurement(&mut self, record: Measurement) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
-        inner.buffer.push(record);
-
+        if inner.buffer.len() < BUFFER_CAPACITY {
+            inner.buffer.push(record);
+        }
         if inner.buffer.len() >= BUFFER_CAPACITY {
             Self::flush_buffer(&mut inner)
         } else {
