@@ -32,7 +32,7 @@ use esp_idf_svc::io::vfs::MountedLittlefs;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::sys::{esp, esp_pm_config_t, esp_pm_configure, settimeofday, timeval};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
-use log::{error, info};
+use log::{error, info, warn};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    info!("Starting up!");
+    warn!("Starting up!");
 
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
@@ -50,11 +50,11 @@ fn main() -> anyhow::Result<()> {
     unsafe {
         esp_idf_svc::sys::esp_read_mac(
             mac.as_mut_ptr(),
-            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_BT,
+            esp_idf_svc::sys::esp_mac_type_t_ESP_MAC_WIFI_STA,
         );
     }
     let mac_str = format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        "{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
         mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
     let lfs = unsafe { Littlefs::<()>::new_partition("storage") }?;
@@ -120,7 +120,7 @@ fn main() -> anyhow::Result<()> {
 
     let _ = max_cpu_freq();
 
-    info!(
+    warn!(
         "Startup complete!, AirBeamMini MAC: {}, Version: {}",
         mac_str,
         env!("CARGO_PKG_VERSION")
