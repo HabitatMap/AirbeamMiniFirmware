@@ -78,5 +78,5 @@ cargo run
 
 ## Generate firmware binary (.bin) file to share
 ```bash
-cargo espflash save-image --merge --partition-table partitions.csv --chip esp32c3 abmfw.bin
+cargo espflash save-image --release --merge --partition-table partitions.csv --chip esp32c3 abmfw.bin
 ```
