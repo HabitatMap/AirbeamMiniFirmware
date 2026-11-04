@@ -1,0 +1,14 @@
+[package]
+name = "airbeam-mini-protocol-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+uuid = "1.21.0"
+
+[[test]]
+name = "ble_protocol"
+path = "ble_protocol.rs"
+
+[workspace]

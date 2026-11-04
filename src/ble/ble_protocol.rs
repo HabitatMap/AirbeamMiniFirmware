@@ -22,13 +22,13 @@ impl AppCommand {
             0x10 => Some(Self::ContinueSession),
             0x11 => Some(Self::DiscardSession),
             0x12 => Some(Self::StartWiFiSync),
-            0x13 if data.len() >= 19 => {
+            0x13 if data.len() >= 20 => {
                 let uuid = Uuid::from_slice_le(&data[1..17]).ok()?;
                 let interval_seconds = u16::from_le_bytes(data[17..19].try_into().ok()?);
                 let interval = std::time::Duration::from_secs(interval_seconds as u64);
                 let session_type = match data[19] {
                     0 => {
-                        if data.len() < 118 {
+                        if data.len() < 134 {
                             return None;
                         }
                         let pm1_index = data[20];

@@ -66,6 +66,15 @@ cargo build
 
 *Note: The first build will take significantly longer as it compiles the entire ESP-IDF framework.*
 
+## Protocol regression tests
+
+The hardware-independent BLE decoder tests use the production protocol and session
+types. Run them on the host with stable Rust, overriding the firmware target:
+
+```bash
+cargo +stable test --manifest-path tests/Cargo.toml --target "$(rustc +stable -vV | sed -n 's/^host: //p')"
+```
+
 ## Flashing & Monitoring
 
 The project is configured to use `espflash` as the runner in `.cargo/config.toml`.
