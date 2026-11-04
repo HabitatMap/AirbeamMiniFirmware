@@ -2,4 +2,6 @@
 /.embuild
 /target
 /Cargo.lock
+/tests/Cargo.lock
+/tests/target
 /components_esp32c3.lock
